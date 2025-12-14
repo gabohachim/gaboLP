@@ -18,15 +18,12 @@ workflows:
             TMPDIR="$(mktemp -d)"
             echo "TMPDIR=$TMPDIR"
 
-            # Guardar tus archivos
             cp -R lib "$TMPDIR/lib"
             if [ -d "assets" ]; then cp -R assets "$TMPDIR/assets"; fi
             cp pubspec.yaml "$TMPDIR/pubspec.yaml"
 
-            # Crear estructura Flutter (Android)
             flutter create . --platforms=android --org com.gabolp.app
 
-            # Restaurar tus archivos
             rm -f pubspec.yaml
             cp "$TMPDIR/pubspec.yaml" pubspec.yaml
 
@@ -39,29 +36,32 @@ workflows:
             fi
           fi
 
-      - name: Parche AndroidManifest (permiso INTERNET)
+      - name: Parche AndroidManifest (permiso INTERNET) - robusto
         script: |
           set -e
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          echo "Buscando AndroidManifest.xml..."
+          find android -name AndroidManifest.xml -print || true
 
-          echo "Buscando Manifest en: $MANIFEST"
-          ls -la android/app/src/main || true
+          MANIFEST="$(find android -name AndroidManifest.xml | head -n 1)"
 
-          if [ ! -f "$MANIFEST" ]; then
-            echo "ERROR: No se encontró AndroidManifest.xml"
+          if [ -z "$MANIFEST" ]; then
+            echo "ERROR: No se encontró AndroidManifest.xml en /android"
+            echo "Contenido de /android:"
+            ls -la android || true
             exit 1
           fi
 
-          # Agregar permiso INTERNET si no existe
-          if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
-            echo "Agregando permiso INTERNET..."
-            # Insertar debajo de la primera línea <manifest ...>
-            sed -i.bak '0,/<manifest/{s/<manifest/<manifest>\n    <uses-permission android:name="android.permission.INTERNET"\/>/}' "$MANIFEST"
+          echo "Usando Manifest: $MANIFEST"
+
+          if grep -q "android.permission.INTERNET" "$MANIFEST"; then
+            echo "Permiso INTERNET ya existe."
           else
-            echo "Permiso INTERNET ya estaba."
+            echo "Agregando permiso INTERNET..."
+            # Inserta la línea justo después de la primera línea <manifest ...>
+            perl -0777 -i -pe 's/(<manifest[^>]*>)/$1\n    <uses-permission android:name="android.permission.INTERNET"\/>/s' "$MANIFEST"
           fi
 
-          echo "Manifest final (primeras 40 líneas):"
+          echo "Primeras 40 líneas del Manifest:"
           head -n 40 "$MANIFEST"
 
       - name: Instalar dependencias
