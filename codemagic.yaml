@@ -5,54 +5,52 @@ workflows:
     environment:
       flutter: stable
     scripts:
-     - name: Preparar proyecto (generar android si falta)
-    script: |
-      set -e
-      if [ ! -d "android" ]; then
-        TMPDIR="$(mktemp -d)"
-        cp -R lib "$TMPDIR/lib"
-        if [ -d "assets" ]; then cp -R assets "$TMPDIR/assets"; fi
-        cp pubspec.yaml "$TMPDIR/pubspec.yaml"
+      - name: Preparar proyecto (generar android si falta)
+        script: |
+          set -e
 
-        flutter create . --platforms=android --org com.gabolp.app
+          echo "Directorio actual:"
+          pwd
+          ls -la
 
-        rm -f pubspec.yaml
-        cp "$TMPDIR/pubspec.yaml" pubspec.yaml
+          if [ ! -d "android" ]; then
+            echo "No existe /android. Lo generamos con flutter create (sin perder tu codigo)."
 
-        rm -rf lib
-        cp -R "$TMPDIR/lib" lib
+            TMPDIR="$(mktemp -d)"
+            echo "TMPDIR=$TMPDIR"
 
-        if [ -d "$TMPDIR/assets" ]; then
-          rm -rf assets
-          cp -R "$TMPDIR/assets" assets
-        fi
-      fi
+            # Guardar tus archivos
+            cp -R lib "$TMPDIR/lib"
+            if [ -d "assets" ]; then cp -R assets "$TMPDIR/assets"; fi
+            cp pubspec.yaml "$TMPDIR/pubspec.yaml"
 
-  - name: Info Flutter (para debug)
-    script: |
-      flutter --version
-      flutter doctor -v
+            # Generar estructura Flutter con Android
+            flutter create . --platforms=android --org com.gabolp.app
 
-  - name: Instalar dependencias
-    script: |
-      flutter pub get
+            # Restaurar tus archivos
+            rm -f pubspec.yaml
+            cp "$TMPDIR/pubspec.yaml" pubspec.yaml
 
-  - name: Verificar assets (muy común que falle por mayúsculas)
-    script: |
-      ls -la assets || true
-      ls -la assets/splash || true
+            rm -rf lib
+            cp -R "$TMPDIR/lib" lib
 
-  - name: Analizar código (aquí sale el error REAL)
-    script: |
-      flutter analyze
+            if [ -d "$TMPDIR/assets" ]; then
+              rm -rf assets
+              cp -R "$TMPDIR/assets" assets
+            fi
+          fi
 
-  - name: Generar Splash (flutter_native_splash)
-    script: |
-      flutter pub run flutter_native_splash:create
+      - name: Instalar dependencias
+        script: |
+          flutter pub get
 
-  - name: Compilar APK Release (verbose)
-    script: |
-      flutter build apk --release -v
+      - name: Generar Splash (flutter_native_splash)
+        script: |
+          flutter pub run flutter_native_splash:create
+
+      - name: Compilar APK Release
+        script: |
+          flutter build apk --release
+
     artifacts:
       - build/app/outputs/flutter-apk/app-release.apk
-
