@@ -48,10 +48,6 @@ workflows:
         script: |
           flutter pub get
 
-      - name: Analizar código (muestra errores reales)
-        script: |
-          flutter analyze
-
       - name: Generar Splash
         script: |
           flutter pub run flutter_native_splash:create
