@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import '../db/vinyl_db.dart';
 
 enum Vista { inicio, buscar, lista, borrar }
@@ -22,6 +21,8 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> resultados = [];
   bool mostrarAgregar = false;
 
+  // Fondo se mantiene en código (por si después lo reactivas),
+  // pero SIN botón para cambiarlo.
   File? fondo;
 
   @override
@@ -34,39 +35,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void snack(String t) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
-  }
-
-  Future<void> elegirFondo() async {
-    final picker = ImagePicker();
-    final img = await picker.pickImage(source: ImageSource.gallery);
-    if (img == null) return;
-
-    if (!mounted) return;
-
-    // Previsualizar y confirmar
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('¿Usar esta foto de fondo?'),
-        content: ClipRRect(
-          borderRadius: BorderRadius.circular(10),
-          child: Image.file(File(img.path), fit: BoxFit.cover),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              setState(() => fondo = File(img.path));
-              Navigator.pop(context);
-            },
-            child: const Text('Usar'),
-          ),
-        ],
-      ),
-    );
   }
 
   Future<void> buscar() async {
@@ -85,14 +53,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
     setState(() {
       resultados = res;
+      // Agregar solo si no existe y si escribió artista+album (año opcional)
       mostrarAgregar = res.isEmpty && artista.isNotEmpty && album.isNotEmpty;
     });
 
-    if (res.isEmpty) {
-      snack('No lo tienes');
-    } else {
-      snack('Ya lo tienes');
-    }
+    snack(res.isEmpty ? 'No lo tienes' : 'Ya lo tienes');
   }
 
   Future<void> agregar() async {
@@ -131,7 +96,7 @@ class _HomeScreenState extends State<HomeScreen> {
           'GaBoLP',
           style: TextStyle(
             fontSize: 12,
-            color: Colors.black54,
+            color: Colors.white70,
             fontWeight: FontWeight.w700,
           ),
         ),
@@ -139,23 +104,43 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ✅ Cuadrado pequeño: "LP" + número
   Widget contadorLp() {
     return FutureBuilder<int>(
       future: VinylDb.instance.getCount(),
       builder: (context, snap) {
         final total = snap.data ?? 0;
-        return Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.65),
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Text(
-            'LP en la lista: $total',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
+        return Align(
+          alignment: Alignment.centerLeft,
+          child: Container(
+            width: 90,
+            height: 70,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.65),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.white.withOpacity(0.10)),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Text(
+                  'LP',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  '$total',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
             ),
           ),
         );
@@ -164,21 +149,41 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget botonesInicio() {
+    Widget btn(IconData icon, String text, VoidCallback onTap) {
+      return InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.85),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Row(
+            children: [
+              Icon(icon),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  text,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+              ),
+              const Icon(Icons.chevron_right),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ElevatedButton(
-          onPressed: () => setState(() => vista = Vista.buscar),
-          child: const Text('Buscar vinilo'),
-        ),
-        ElevatedButton(
-          onPressed: () => setState(() => vista = Vista.lista),
-          child: const Text('Mostrar lista de vinilos'),
-        ),
-        ElevatedButton(
-          onPressed: () => setState(() => vista = Vista.borrar),
-          child: const Text('Borrar vinilos'),
-        ),
+        btn(Icons.search, 'Buscar vinilo', () => setState(() => vista = Vista.buscar)),
+        const SizedBox(height: 10),
+        btn(Icons.list, 'Mostrar lista de vinilos', () => setState(() => vista = Vista.lista)),
+        const SizedBox(height: 10),
+        btn(Icons.delete_outline, 'Borrar vinilos', () => setState(() => vista = Vista.borrar)),
       ],
     );
   }
@@ -189,17 +194,21 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         TextField(
           controller: artistaCtrl,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'Artista',
             filled: true,
+            fillColor: Colors.white.withOpacity(0.85),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
           ),
         ),
         const SizedBox(height: 10),
         TextField(
           controller: albumCtrl,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'Álbum (opcional para buscar)',
             filled: true,
+            fillColor: Colors.white.withOpacity(0.85),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
           ),
         ),
         const SizedBox(height: 10),
@@ -209,21 +218,18 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         const SizedBox(height: 12),
 
-        // Lista debajo del buscador (cuando escribes artista)
         if (resultados.isNotEmpty)
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.78),
+              color: Colors.white.withOpacity(0.85),
               borderRadius: BorderRadius.circular(14),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Resultados en tu colección:',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
+                const Text('Resultados en tu colección:',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
                 ...resultados.map((v) => Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -238,15 +244,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
         const SizedBox(height: 12),
 
-        // Si NO lo tienes (y escribiste artista+album), aparece agregar
         if (mostrarAgregar) ...[
           TextField(
             controller: yearCtrl,
-            decoration: const InputDecoration(
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
               labelText: 'Año (opcional)',
               filled: true,
+              fillColor: Colors.white.withOpacity(0.85),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
             ),
-            keyboardType: TextInputType.number,
           ),
           const SizedBox(height: 10),
           ElevatedButton(
@@ -262,7 +269,7 @@ class _HomeScreenState extends State<HomeScreen> {
             resultados = [];
             mostrarAgregar = false;
           }),
-          child: const Text('Volver'),
+          child: const Text('Volver', style: TextStyle(color: Colors.white)),
         ),
       ],
     );
@@ -272,13 +279,9 @@ class _HomeScreenState extends State<HomeScreen> {
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: VinylDb.instance.getAll(),
       builder: (context, snap) {
-        if (!snap.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
+        if (!snap.hasData) return const Center(child: CircularProgressIndicator());
         final items = snap.data!;
-        if (items.isEmpty) {
-          return const Text('No tienes vinilos todavía.');
-        }
+        if (items.isEmpty) return const Text('No tienes vinilos todavía.', style: TextStyle(color: Colors.white));
 
         return ListView.builder(
           shrinkWrap: true,
@@ -289,10 +292,9 @@ class _HomeScreenState extends State<HomeScreen> {
             final year = (v['year'] as String?)?.trim() ?? '';
             final yearTxt = year.isEmpty ? '' : ' ($year)';
             return Card(
+              color: Colors.white.withOpacity(0.88),
               child: ListTile(
-                title: Text(
-                  'LP N° ${v['numero']} — ${v['artista']} — ${v['album']}$yearTxt',
-                ),
+                title: Text('LP N° ${v['numero']} — ${v['artista']} — ${v['album']}$yearTxt'),
                 trailing: conBorrar
                     ? IconButton(
                         icon: const Icon(Icons.delete),
@@ -318,49 +320,48 @@ class _HomeScreenState extends State<HomeScreen> {
         : Container(color: Colors.grey.shade300);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Colección vinilos')),
+      // ✅ sin AppBar => más “pantalla completa”
+      appBar: null,
       body: Stack(
         children: [
           Positioned.fill(child: bg),
-          Positioned.fill(child: Container(color: Colors.white.withOpacity(0.10))),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  contadorLp(),
-                  const SizedBox(height: 14),
-
-                  if (vista == Vista.inicio) ...[
-                    botonesInicio(),
+          // Capa oscura para lectura
+          Positioned.fill(child: Container(color: Colors.black.withOpacity(0.35))),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    contadorLp(),
                     const SizedBox(height: 14),
-                    ElevatedButton(
-                      onPressed: elegirFondo,
-                      child: const Text('Actualizar fondo (elegir foto)'),
-                    ),
-                  ],
 
-                  if (vista == Vista.buscar) vistaBuscar(),
+                    if (vista == Vista.inicio) ...[
+                      botonesInicio(),
+                    ],
 
-                  if (vista == Vista.lista) ...[
-                    listaCompleta(conBorrar: false),
-                    const SizedBox(height: 10),
-                    TextButton(
-                      onPressed: () => setState(() => vista = Vista.inicio),
-                      child: const Text('Volver'),
-                    ),
-                  ],
+                    if (vista == Vista.buscar) vistaBuscar(),
 
-                  if (vista == Vista.borrar) ...[
-                    listaCompleta(conBorrar: true),
-                    const SizedBox(height: 10),
-                    TextButton(
-                      onPressed: () => setState(() => vista = Vista.inicio),
-                      child: const Text('Volver'),
-                    ),
+                    if (vista == Vista.lista) ...[
+                      listaCompleta(conBorrar: false),
+                      const SizedBox(height: 10),
+                      TextButton(
+                        onPressed: () => setState(() => vista = Vista.inicio),
+                        child: const Text('Volver', style: TextStyle(color: Colors.white)),
+                      ),
+                    ],
+
+                    if (vista == Vista.borrar) ...[
+                      listaCompleta(conBorrar: true),
+                      const SizedBox(height: 10),
+                      TextButton(
+                        onPressed: () => setState(() => vista = Vista.inicio),
+                        child: const Text('Volver', style: TextStyle(color: Colors.white)),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           ),
