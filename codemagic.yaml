@@ -1,1 +1,57 @@
+workflows:
+  android-apk:
+    name: Android APK (GaBoLP)
+    max_build_duration: 60
+    environment:
+      flutter: stable
+    scripts:
+      - name: Preparar proyecto (generar android si falta)
+        script: |
+          set -e
+
+          echo "Directorio actual:"
+          pwd
+          ls -la
+
+          if [ ! -d "android" ]; then
+            echo "No existe /android. Lo generamos con flutter create (sin perder tu codigo)."
+
+            TMPDIR="$(mktemp -d)"
+            echo "TMPDIR=$TMPDIR"
+
+            # Guardar tus archivos
+            cp -R lib "$TMPDIR/lib"
+            if [ -d "assets" ]; then cp -R assets "$TMPDIR/assets"; fi
+            cp pubspec.yaml "$TMPDIR/pubspec.yaml"
+
+            # Generar estructura Flutter con Android
+            flutter create . --platforms=android --org com.gabolp.app
+
+            # Restaurar tus archivos
+            rm -f pubspec.yaml
+            cp "$TMPDIR/pubspec.yaml" pubspec.yaml
+
+            rm -rf lib
+            cp -R "$TMPDIR/lib" lib
+
+            if [ -d "$TMPDIR/assets" ]; then
+              rm -rf assets
+              cp -R "$TMPDIR/assets" assets
+            fi
+          fi
+
+      - name: Instalar dependencias
+        script: |
+          flutter pub get
+
+      - name: Generar Splash (flutter_native_splash)
+        script: |
+          flutter pub run flutter_native_splash:create
+
+      - name: Compilar APK Release
+        script: |
+          flutter build apk --release
+
+    artifacts:
+      - build/app/outputs/flutter-apk/app-release.apk
 
