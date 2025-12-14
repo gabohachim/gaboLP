@@ -1,20 +1,19 @@
 workflows:
   android-apk:
-    name: Android APK (GaBoLP)
+    name: Android APK - GaBoLP
     max_build_duration: 60
     environment:
       flutter: stable
+
     scripts:
-      - name: Preparar proyecto (generar android si falta)
+      - name: Preparar proyecto (crear android si falta)
         script: |
           set -e
-
-          echo "Directorio actual:"
-          pwd
+          echo "PWD: $(pwd)"
           ls -la
 
           if [ ! -d "android" ]; then
-            echo "No existe /android. Lo generamos con flutter create (sin perder tu codigo)."
+            echo "No existe /android. Generando con flutter create ."
 
             TMPDIR="$(mktemp -d)"
             echo "TMPDIR=$TMPDIR"
@@ -24,10 +23,10 @@ workflows:
             if [ -d "assets" ]; then cp -R assets "$TMPDIR/assets"; fi
             cp pubspec.yaml "$TMPDIR/pubspec.yaml"
 
-            # Generar estructura Flutter con Android
+            # Crear estructura Flutter (solo Android)
             flutter create . --platforms=android --org com.gabolp.app
 
-            # Restaurar tus archivos
+            # Restaurar tus archivos (para no perder tu codigo)
             rm -f pubspec.yaml
             cp "$TMPDIR/pubspec.yaml" pubspec.yaml
 
@@ -40,17 +39,26 @@ workflows:
             fi
           fi
 
+      - name: Verificar assets
+        script: |
+          ls -la assets || true
+          ls -la assets/splash || true
+
       - name: Instalar dependencias
         script: |
           flutter pub get
 
-      - name: Generar Splash (flutter_native_splash)
+      - name: Analizar código (muestra errores reales)
+        script: |
+          flutter analyze
+
+      - name: Generar Splash
         script: |
           flutter pub run flutter_native_splash:create
 
-      - name: Compilar APK Release
+      - name: Compilar APK Release (verbose)
         script: |
-          flutter build apk --release
+          flutter build apk --release -v
 
     artifacts:
       - build/app/outputs/flutter-apk/app-release.apk
