@@ -23,10 +23,10 @@ workflows:
             if [ -d "assets" ]; then cp -R assets "$TMPDIR/assets"; fi
             cp pubspec.yaml "$TMPDIR/pubspec.yaml"
 
-            # Crear estructura Flutter (solo Android)
+            # Crear estructura Flutter (Android)
             flutter create . --platforms=android --org com.gabolp.app
 
-            # Restaurar tus archivos (para no perder tu codigo)
+            # Restaurar tus archivos
             rm -f pubspec.yaml
             cp "$TMPDIR/pubspec.yaml" pubspec.yaml
 
@@ -39,10 +39,30 @@ workflows:
             fi
           fi
 
-      - name: Verificar assets
+      - name: Parche AndroidManifest (permiso INTERNET)
         script: |
-          ls -la assets || true
-          ls -la assets/splash || true
+          set -e
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+
+          echo "Buscando Manifest en: $MANIFEST"
+          ls -la android/app/src/main || true
+
+          if [ ! -f "$MANIFEST" ]; then
+            echo "ERROR: No se encontró AndroidManifest.xml"
+            exit 1
+          fi
+
+          # Agregar permiso INTERNET si no existe
+          if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
+            echo "Agregando permiso INTERNET..."
+            # Insertar debajo de la primera línea <manifest ...>
+            sed -i.bak '0,/<manifest/{s/<manifest/<manifest>\n    <uses-permission android:name="android.permission.INTERNET"\/>/}' "$MANIFEST"
+          else
+            echo "Permiso INTERNET ya estaba."
+          fi
+
+          echo "Manifest final (primeras 40 líneas):"
+          head -n 40 "$MANIFEST"
 
       - name: Instalar dependencias
         script: |
@@ -52,9 +72,9 @@ workflows:
         script: |
           flutter pub run flutter_native_splash:create
 
-      - name: Compilar APK Release (verbose)
+      - name: Compilar APK Release
         script: |
-          flutter build apk --release -v
+          flutter build apk --release
 
     artifacts:
       - build/app/outputs/flutter-apk/app-release.apk
