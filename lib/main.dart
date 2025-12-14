@@ -1,7 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'ui/home_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Hace que el contenido llegue bajo la barra de estado (look full screen)
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+
   runApp(const GaBoLpApp());
 }
 
@@ -10,14 +16,11 @@ class GaBoLpApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-   return MaterialApp(
-  debugShowCheckedModeBanner: false,
-  title: 'Colección vinilos',
-  theme: ThemeData(
-    useMaterial3: true,
-  ),
-  home: const HomeScreen(),
-);
-
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Colección vinilos',
+      theme: ThemeData(useMaterial3: true),
+      home: const HomeScreen(),
+    );
   }
 }
