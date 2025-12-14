@@ -4,10 +4,7 @@ import 'ui/home_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Hace que el contenido llegue bajo la barra de estado (look full screen)
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-
   runApp(const GaBoLpApp());
 }
 
