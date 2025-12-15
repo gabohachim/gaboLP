@@ -145,4 +145,3 @@ class DiscographyService {
     }).toList();
   }
 }
-
