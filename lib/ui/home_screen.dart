@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
@@ -7,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import '../db/vinyl_db.dart';
 import '../services/metadata_service.dart';
+import 'discography_screen.dart';
 
 enum Vista { inicio, buscar, lista, borrar }
 
@@ -24,15 +24,16 @@ class _HomeScreenState extends State<HomeScreen> {
   final albumCtrl = TextEditingController();
   final yearCtrl = TextEditingController();
 
+  String lastArtist = '';
+  String lastAlbum = '';
+
   List<Map<String, dynamic>> resultados = [];
   bool mostrarAgregar = false;
 
-  // Carátula (preview desde internet) + guardado local
-  String? coverPreviewUrl;
+  String? coverPreviewUrl; // la elegida final (ideal 500)
   String? mbidFound;
   bool buscandoCover = false;
 
-  // Fondo (sin botón, por ahora lo dejamos en gris)
   File? fondo;
 
   @override
@@ -44,6 +45,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void snack(String t) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
   }
 
@@ -58,7 +60,6 @@ class _HomeScreenState extends State<HomeScreen> {
         await coversDir.create(recursive: true);
       }
 
-      // Intentar deducir extensión por content-type, si no, jpg
       final ct = res.headers['content-type'] ?? '';
       final ext = ct.contains('png') ? 'png' : 'jpg';
 
@@ -87,23 +88,130 @@ class _HomeScreenState extends State<HomeScreen> {
 
     setState(() {
       resultados = res;
-      // Mostrar agregar solo si escribió artista+album y no existe
+      lastArtist = artista;
+      lastAlbum = album;
+
       mostrarAgregar = res.isEmpty && artista.isNotEmpty && album.isNotEmpty;
-      // reset preview (para que no quede una carátula vieja)
+
       coverPreviewUrl = null;
       mbidFound = null;
       buscandoCover = false;
     });
 
     snack(res.isEmpty ? 'No lo tienes' : 'Ya lo tienes');
+
+    // ✅ limpiar barra al apretar buscar
+    artistaCtrl.clear();
+    albumCtrl.clear();
+    yearCtrl.clear();
+  }
+
+  String _artistForActions() =>
+      artistaCtrl.text.trim().isNotEmpty ? artistaCtrl.text.trim() : lastArtist.trim();
+
+  String _albumForActions() =>
+      albumCtrl.text.trim().isNotEmpty ? albumCtrl.text.trim() : lastAlbum.trim();
+
+  Future<void> _showCoverPicker(List<CoverCandidate> options) async {
+    final picked = await showModalBottomSheet<CoverCandidate>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Elige una carátula',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 10),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: options.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, i) {
+                      final c = options[i];
+                      return InkWell(
+                        onTap: () => Navigator.pop(ctx, c),
+                        borderRadius: BorderRadius.circular(14),
+                        child: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: Colors.black12),
+                          ),
+                          child: Row(
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Image.network(
+                                  c.coverUrl250,
+                                  width: 70,
+                                  height: 70,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => const SizedBox(
+                                    width: 70,
+                                    height: 70,
+                                    child: Center(child: Icon(Icons.broken_image)),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  'Año: ${c.year ?? '—'}',
+                                  style: const TextStyle(fontWeight: FontWeight.w800),
+                                ),
+                              ),
+                              const Icon(Icons.chevron_right),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, null),
+                  child: const Text('Cancelar'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (picked == null) return;
+
+    // aplicar la selección
+    setState(() {
+      coverPreviewUrl = picked.coverUrl500;
+      mbidFound = picked.mbid;
+    });
+
+    if (yearCtrl.text.trim().isEmpty && (picked.year?.isNotEmpty ?? false)) {
+      yearCtrl.text = picked.year!;
+    }
+
+    snack('Carátula seleccionada ✅');
   }
 
   Future<void> buscarCoverYAno() async {
-    final artist = artistaCtrl.text.trim();
-    final album = albumCtrl.text.trim();
+    final artist = _artistForActions();
+    final album = _albumForActions();
 
     if (artist.isEmpty || album.isEmpty) {
-      snack('Escribe Artista y Álbum');
+      snack('Falta Artista o Álbum (vuelve a buscar)');
       return;
     }
 
@@ -113,36 +221,40 @@ class _HomeScreenState extends State<HomeScreen> {
       mbidFound = null;
     });
 
-    final info = await MetadataService.fetchCoverAndYear(
+    final options = await MetadataService.fetchCoverCandidates(
       artist: artist,
       album: album,
     );
 
     if (!mounted) return;
 
-    if (info == null) {
-      setState(() => buscandoCover = false);
-      snack('No encontré carátula/año');
+    setState(() => buscandoCover = false);
+
+    if (options.isEmpty) {
+      snack('No encontré carátulas');
       return;
     }
 
-    // Autocompletar año si está vacío
-    if (yearCtrl.text.trim().isEmpty && info.year != null && info.year!.isNotEmpty) {
-      yearCtrl.text = info.year!;
+    // Si hay una sola, ponerla directo. Si hay varias, elegir.
+    if (options.length == 1) {
+      final c = options.first;
+      setState(() {
+        coverPreviewUrl = c.coverUrl500;
+        mbidFound = c.mbid;
+      });
+      if (yearCtrl.text.trim().isEmpty && (c.year?.isNotEmpty ?? false)) {
+        yearCtrl.text = c.year!;
+      }
+      snack('Carátula encontrada ✅');
+      return;
     }
 
-    setState(() {
-      coverPreviewUrl = info.coverUrl;
-      mbidFound = info.mbid;
-      buscandoCover = false;
-    });
-
-    snack('Encontrado ✅');
+    await _showCoverPicker(options);
   }
 
   Future<void> agregar() async {
-    final artista = artistaCtrl.text.trim();
-    final album = albumCtrl.text.trim();
+    final artista = _artistForActions();
+    final album = _albumForActions();
     final year = yearCtrl.text.trim();
 
     if (artista.isEmpty || album.isEmpty) {
@@ -165,11 +277,13 @@ class _HomeScreenState extends State<HomeScreen> {
       );
 
       snack('Agregado');
+
       setState(() {
         mostrarAgregar = false;
         resultados = [];
         coverPreviewUrl = null;
         mbidFound = null;
+        buscandoCover = false;
         yearCtrl.clear();
       });
     } catch (_) {
@@ -194,7 +308,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Cuadrado pequeño LP
   Widget contadorLp() {
     return FutureBuilder<int>(
       future: VinylDb.instance.getCount(),
@@ -214,22 +327,16 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Text(
-                  'LP',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                Text(
-                  '$total',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
+                const Text('LP',
+                    style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700)),
+                Text('$total',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900)),
               ],
             ),
           ),
@@ -254,10 +361,9 @@ class _HomeScreenState extends State<HomeScreen> {
               Icon(icon),
               const SizedBox(width: 12),
               Expanded(
-                child: Text(
-                  text,
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-                ),
+                child: Text(text,
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w700)),
               ),
               const Icon(Icons.chevron_right),
             ],
@@ -270,6 +376,13 @@ class _HomeScreenState extends State<HomeScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         btn(Icons.search, 'Buscar vinilo', () => setState(() => vista = Vista.buscar)),
+        const SizedBox(height: 10),
+        btn(Icons.library_music, 'Discografías', () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const DiscographyScreen()),
+          );
+        }),
         const SizedBox(height: 10),
         btn(Icons.list, 'Mostrar lista de vinilos', () => setState(() => vista = Vista.lista)),
         const SizedBox(height: 10),
@@ -285,12 +398,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (f.existsSync()) {
         return ClipRRect(
           borderRadius: BorderRadius.circular(8),
-          child: Image.file(
-            f,
-            width: 48,
-            height: 48,
-            fit: BoxFit.cover,
-          ),
+          child: Image.file(f, width: 48, height: 48, fit: BoxFit.cover),
         );
       }
     }
@@ -298,9 +406,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget vistaBuscar() {
-    final artista = artistaCtrl.text.trim();
-    final album = albumCtrl.text.trim();
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -324,13 +429,9 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         const SizedBox(height: 10),
-        ElevatedButton(
-          onPressed: buscar,
-          child: const Text('Buscar'),
-        ),
+        ElevatedButton(onPressed: buscar, child: const Text('Buscar')),
         const SizedBox(height: 12),
 
-        // Resultados debajo del buscador
         if (resultados.isNotEmpty)
           Container(
             padding: const EdgeInsets.all(12),
@@ -365,9 +466,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
         const SizedBox(height: 12),
 
-        // Si NO lo tienes (y escribió artista+album), aparece agregar + buscar carátula/año
         if (mostrarAgregar) ...[
-          // Preview carátula
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.85),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Text(
+              'Agregar este vinilo:\nArtista: $lastArtist\nÁlbum: $lastAlbum',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(height: 10),
+
           if (coverPreviewUrl != null && coverPreviewUrl!.trim().isNotEmpty)
             Container(
               padding: const EdgeInsets.all(10),
@@ -392,11 +504,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Carátula encontrada.\nArtista: $artista\nÁlbum: $album',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
+                  const Expanded(
+                    child: Text('Carátula elegida ✅',
+                        style: TextStyle(fontWeight: FontWeight.w800)),
                   ),
                 ],
               ),
@@ -418,14 +528,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
           ElevatedButton(
             onPressed: buscandoCover ? null : buscarCoverYAno,
-            child: Text(buscandoCover ? 'Buscando...' : 'Buscar carátula y año (internet)'),
+            child: Text(
+              buscandoCover ? 'Buscando...' : 'Buscar carátula y año (internet)',
+            ),
           ),
           const SizedBox(height: 10),
 
-          ElevatedButton(
-            onPressed: agregar,
-            child: const Text('Agregar vinilo'),
-          ),
+          ElevatedButton(onPressed: agregar, child: const Text('Agregar vinilo')),
         ],
 
         const SizedBox(height: 10),
@@ -437,6 +546,8 @@ class _HomeScreenState extends State<HomeScreen> {
             coverPreviewUrl = null;
             mbidFound = null;
             buscandoCover = false;
+            lastArtist = '';
+            lastAlbum = '';
           }),
           child: const Text('Volver', style: TextStyle(color: Colors.white)),
         ),
@@ -467,7 +578,8 @@ class _HomeScreenState extends State<HomeScreen> {
               color: Colors.white.withOpacity(0.88),
               child: ListTile(
                 leading: _leadingCover(v),
-                title: Text('LP N° ${v['numero']} — ${v['artista']} — ${v['album']}$yearTxt'),
+                title: Text(
+                    'LP N° ${v['numero']} — ${v['artista']} — ${v['album']}$yearTxt'),
                 trailing: conBorrar
                     ? IconButton(
                         icon: const Icon(Icons.delete),
@@ -507,25 +619,24 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     contadorLp(),
                     const SizedBox(height: 14),
-
                     if (vista == Vista.inicio) botonesInicio(),
                     if (vista == Vista.buscar) vistaBuscar(),
-
                     if (vista == Vista.lista) ...[
                       listaCompleta(conBorrar: false),
                       const SizedBox(height: 10),
                       TextButton(
                         onPressed: () => setState(() => vista = Vista.inicio),
-                        child: const Text('Volver', style: TextStyle(color: Colors.white)),
+                        child: const Text('Volver',
+                            style: TextStyle(color: Colors.white)),
                       ),
                     ],
-
                     if (vista == Vista.borrar) ...[
                       listaCompleta(conBorrar: true),
                       const SizedBox(height: 10),
                       TextButton(
                         onPressed: () => setState(() => vista = Vista.inicio),
-                        child: const Text('Volver', style: TextStyle(color: Colors.white)),
+                        child: const Text('Volver',
+                            style: TextStyle(color: Colors.white)),
                       ),
                     ],
                   ],
@@ -539,4 +650,3 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
-  
