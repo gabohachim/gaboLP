@@ -13,6 +13,9 @@ class CoverCandidate {
     required this.coverUrl500,
     this.year,
   });
+
+  // ✅ Compatibilidad (por si algún archivo antiguo usa .mbid)
+  String get mbid => releaseGroupId;
 }
 
 class MetadataService {
@@ -39,7 +42,7 @@ class MetadataService {
     return http.get(url, headers: _headers());
   }
 
-  /// ✅ Trae opciones de carátulas (pero usando RELEASE-GROUP, mucho más confiable)
+  /// ✅ Devuelve opciones de carátulas usando RELEASE-GROUP (más confiable)
   static Future<List<CoverCandidate>> fetchCoverCandidates({
     required String artist,
     required String album,
@@ -48,10 +51,10 @@ class MetadataService {
     final al = album.trim();
     if (a.isEmpty || al.isEmpty) return [];
 
-    // Buscar releases, pero nos quedamos con release-group.id (álbum)
+    // Buscar releases y sacar release-group (álbum real)
     final q = 'release:"$al" AND artist:"$a"';
     final url = Uri.parse(
-      '$_mbBase/release/?query=${Uri.encodeQueryComponent(q)}&fmt=json&limit=15',
+      '$_mbBase/release/?query=${Uri.encodeQueryComponent(q)}&fmt=json&limit=20',
     );
 
     final res = await _getJson(url);
@@ -67,34 +70,28 @@ class MetadataService {
     for (final r in releases) {
       final m = r as Map<String, dynamic>;
 
-      // Año desde release date (si existe)
       final date = (m['date'] as String?) ?? '';
       final year = date.length >= 4 ? date.substring(0, 4) : null;
 
-      // Sacar release-group id (esto es CLAVE)
       final rg = m['release-group'] as Map<String, dynamic>?;
       final rgid = rg?['id'] as String?;
       if (rgid == null) continue;
 
-      // Evitar duplicados
       if (seen.contains(rgid)) continue;
       seen.add(rgid);
 
       // Cover Art Archive por release-group
-      // Si existe: devuelve imagen; si no: falla y Image.network mostrará broken_image
       final u250 = 'https://coverartarchive.org/release-group/$rgid/front-250';
       final u500 = 'https://coverartarchive.org/release-group/$rgid/front-500';
 
-      out.add(
-        CoverCandidate(
-          releaseGroupId: rgid,
-          year: year,
-          coverUrl250: u250,
-          coverUrl500: u500,
-        ),
-      );
+      out.add(CoverCandidate(
+        releaseGroupId: rgid,
+        year: year,
+        coverUrl250: u250,
+        coverUrl500: u500,
+      ));
 
-      if (out.length >= 8) break; // suficientes opciones
+      if (out.length >= 8) break;
     }
 
     return out;
