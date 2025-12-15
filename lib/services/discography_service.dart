@@ -10,7 +10,7 @@ class ArtistHit {
 }
 
 class AlbumItem {
-  final String id;
+  final String id; // release-group id
   final String title;
   final String? year;
   final String? coverUrl;
@@ -26,7 +26,7 @@ class AlbumItem {
 class TrackItem {
   final int number;
   final String title;
-  final String? length;
+  final String? length; // mm:ss
 
   TrackItem({required this.number, required this.title, this.length});
 }
@@ -35,14 +35,11 @@ class DiscographyService {
   static const _mbBase = 'https://musicbrainz.org/ws/2';
 
   static DateTime _lastCall = DateTime.fromMillisecondsSinceEpoch(0);
-
   static Future<void> _throttle() async {
     final now = DateTime.now();
     final diff = now.difference(_lastCall);
     if (diff.inMilliseconds < 1100) {
-      await Future.delayed(
-        Duration(milliseconds: 1100 - diff.inMilliseconds),
-      );
+      await Future.delayed(Duration(milliseconds: 1100 - diff.inMilliseconds));
     }
     _lastCall = DateTime.now();
   }
@@ -57,12 +54,9 @@ class DiscographyService {
     return http.get(url, headers: _headers());
   }
 
-  /// Buscar artista
   static Future<List<ArtistHit>> searchArtist(String name) async {
-    final q = 'artist:"$name"';
-    final url = Uri.parse(
-      '$_mbBase/artist/?query=${Uri.encodeQueryComponent(q)}&fmt=json&limit=10',
-    );
+    final q = 'artist:"${name.trim()}"';
+    final url = Uri.parse('$_mbBase/artist/?query=${Uri.encodeQueryComponent(q)}&fmt=json&limit=10');
 
     final res = await _get(url);
     if (res.statusCode != 200) return [];
@@ -73,75 +67,98 @@ class DiscographyService {
     return artists.map((a) {
       final m = a as Map<String, dynamic>;
       return ArtistHit(
-        id: m['id'],
-        name: m['name'],
-        disambiguation: m['disambiguation'],
+        id: (m['id'] as String),
+        name: (m['name'] as String),
+        disambiguation: (m['disambiguation'] as String?),
       );
     }).toList();
   }
 
-  /// Discografía
+  /// Discografía de álbumes ordenada por AÑO (sin año al final)
   static Future<List<AlbumItem>> getDiscographyAlbums(String artistId) async {
     final url = Uri.parse(
-      '$_mbBase/release-group?artist=$artistId&fmt=json&type=album&limit=100',
+      '$_mbBase/release-group?artist=$artistId&fmt=json&limit=100&type=album',
     );
 
     final res = await _get(url);
     if (res.statusCode != 200) return [];
 
     final data = jsonDecode(res.body) as Map<String, dynamic>;
-    final groups = (data['release-groups'] as List?) ?? [];
+    final rgs = (data['release-groups'] as List?) ?? [];
 
-    return groups.map((g) {
-      final m = g as Map<String, dynamic>;
-      final date = (m['first-release-date'] as String?) ?? '';
-      final year = date.length >= 4 ? date.substring(0, 4) : null;
+    final items = <AlbumItem>[];
+    for (final it in rgs) {
+      final m = it as Map<String, dynamic>;
+      final id = m['id'] as String;
+      final title = (m['title'] as String?) ?? 'Álbum';
+      final firstDate = (m['first-release-date'] as String?) ?? '';
+      final year = firstDate.length >= 4 ? firstDate.substring(0, 4) : null;
 
-      return AlbumItem(
-        id: m['id'],
-        title: m['title'],
-        year: year,
-        coverUrl:
-            'https://coverartarchive.org/release-group/${m['id']}/front-250',
-      );
-    }).toList();
+      // Cover
+      final coverUrl = 'https://coverartarchive.org/release-group/$id/front-250';
+
+      items.add(AlbumItem(id: id, title: title, year: year, coverUrl: coverUrl));
+    }
+
+    // ✅ Orden por año (sin año => al final), y si empatan, por título
+    items.sort((a, b) {
+      final ay = int.tryParse(a.year ?? '');
+      final by = int.tryParse(b.year ?? '');
+
+      if (ay == null && by == null) {
+        return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+      }
+      if (ay == null) return 1;  // a al final
+      if (by == null) return -1; // b al final
+
+      final c = ay.compareTo(by);
+      if (c != 0) return c;
+      return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+    });
+
+    return items;
   }
 
-  /// Canciones
-  static Future<List<TrackItem>> getTracksFromReleaseGroup(
-      String releaseGroupId) async {
-    final r1 = await _get(Uri.parse(
-        '$_mbBase/release?release-group=$releaseGroupId&fmt=json&limit=1'));
-    if (r1.statusCode != 200) return [];
+  static Future<List<TrackItem>> getTracksFromReleaseGroup(String releaseGroupId) async {
+    final url1 = Uri.parse('$_mbBase/release?release-group=$releaseGroupId&fmt=json&limit=1');
+    final res1 = await _get(url1);
+    if (res1.statusCode != 200) return [];
 
-    final releases = (jsonDecode(r1.body)['releases'] as List?) ?? [];
+    final data1 = jsonDecode(res1.body) as Map<String, dynamic>;
+    final releases = (data1['releases'] as List?) ?? [];
     if (releases.isEmpty) return [];
 
-    final releaseId = releases.first['id'];
+    final releaseId = (releases.first as Map<String, dynamic>)['id'] as String;
 
-    final r2 = await _get(Uri.parse(
-        '$_mbBase/release/$releaseId?fmt=json&inc=recordings'));
-    if (r2.statusCode != 200) return [];
+    final url2 = Uri.parse('$_mbBase/release/$releaseId?fmt=json&inc=recordings');
+    final res2 = await _get(url2);
+    if (res2.statusCode != 200) return [];
 
-    final media = (jsonDecode(r2.body)['media'] as List?) ?? [];
+    final data2 = jsonDecode(res2.body) as Map<String, dynamic>;
+    final media = (data2['media'] as List?) ?? [];
     if (media.isEmpty) return [];
 
-    final tracks = (media.first['tracks'] as List?) ?? [];
-    int n = 1;
+    final tracks = ((media.first as Map<String, dynamic>)['tracks'] as List?) ?? [];
+    final out = <TrackItem>[];
 
-    return tracks.map((t) {
-      final len = t['length'];
-      String? dur;
-      if (len != null) {
-        final s = (len / 1000).round();
-        dur = '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+    int n = 1;
+    for (final t in tracks) {
+      final tm = t as Map<String, dynamic>;
+      final title = (tm['title'] as String?) ?? 'Track';
+
+      final lenMs = tm['length'] as int?;
+      String? len;
+      if (lenMs != null) {
+        final totalSec = (lenMs / 1000).round();
+        final min = totalSec ~/ 60;
+        final sec = totalSec % 60;
+        len = '${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
       }
 
-      return TrackItem(
-        number: n++,
-        title: t['title'],
-        length: dur,
-      );
-    }).toList();
+      out.add(TrackItem(number: n, title: title, length: len));
+      n++;
+    }
+
+    return out;
   }
 }
