@@ -86,10 +86,7 @@ workflows:
             head -n 60 "$MERGED"
             exit 1
           fi
-
-    artifacts:
-      - build/app/outputs/flutter-apk/app-release.apk
-            - name: Verificar INTERNET en manifest final
+                - name: Verificar INTERNET en manifest final
         script: |
           echo "Buscando merged manifest de la APP..."
           MERGED="$(find build/app -path "*merged_manifests*" -path "*release*" -name "AndroidManifest.xml" | head -n 1)"
@@ -108,3 +105,7 @@ workflows:
             exit 1
           fi
 
+
+    artifacts:
+      - build/app/outputs/flutter-apk/app-release.apk
+          
