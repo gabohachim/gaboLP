@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import '../db/vinyl_db.dart';
 import '../services/metadata_service.dart';
+import 'discography_screen.dart';
 
 enum Vista { inicio, buscar, lista, borrar }
 
@@ -75,7 +76,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ✅ LIMPIAR BARRA al apretar Buscar
+  // ✅ BUSCAR: guarda lo escrito y limpia la barra
   Future<void> buscar() async {
     final artista = artistaCtrl.text.trim();
     final album = albumCtrl.text.trim();
@@ -108,7 +109,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     snack(res.isEmpty ? 'No lo tienes' : 'Ya lo tienes');
 
-    // ✅ limpiar campos del buscador
+    // ✅ limpiar campos del buscador (lo que pediste)
     artistaCtrl.clear();
     albumCtrl.clear();
     yearCtrl.clear();
@@ -296,6 +297,16 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         btn(Icons.search, 'Buscar vinilo', () => setState(() => vista = Vista.buscar)),
         const SizedBox(height: 10),
+
+        // ✅ NUEVO BOTÓN: DISCOGRAFÍAS
+        btn(Icons.library_music, 'Discografías', () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const DiscographyScreen()),
+          );
+        }),
+        const SizedBox(height: 10),
+
         btn(Icons.list, 'Mostrar lista de vinilos', () => setState(() => vista = Vista.lista)),
         const SizedBox(height: 10),
         btn(Icons.delete_outline, 'Borrar vinilos', () => setState(() => vista = Vista.borrar)),
@@ -454,9 +465,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
           ElevatedButton(
             onPressed: buscandoCover ? null : buscarCoverYAno,
-            child: Text(
-              buscandoCover ? 'Buscando...' : 'Buscar carátula y año (internet)',
-            ),
+            child: Text(buscandoCover ? 'Buscando...' : 'Buscar carátula y año (internet)'),
           ),
           const SizedBox(height: 10),
 
@@ -509,9 +518,7 @@ class _HomeScreenState extends State<HomeScreen> {
               color: Colors.white.withOpacity(0.88),
               child: ListTile(
                 leading: _leadingCover(v),
-                title: Text(
-                  'LP N° ${v['numero']} — ${v['artista']} — ${v['album']}$yearTxt',
-                ),
+                title: Text('LP N° ${v['numero']} — ${v['artista']} — ${v['album']}$yearTxt'),
                 trailing: conBorrar
                     ? IconButton(
                         icon: const Icon(Icons.delete),
@@ -560,8 +567,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 10),
                       TextButton(
                         onPressed: () => setState(() => vista = Vista.inicio),
-                        child: const Text('Volver',
-                            style: TextStyle(color: Colors.white)),
+                        child: const Text('Volver', style: TextStyle(color: Colors.white)),
                       ),
                     ],
 
@@ -570,8 +576,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 10),
                       TextButton(
                         onPressed: () => setState(() => vista = Vista.inicio),
-                        child: const Text('Volver',
-                            style: TextStyle(color: Colors.white)),
+                        child: const Text('Volver', style: TextStyle(color: Colors.white)),
                       ),
                     ],
                   ],
