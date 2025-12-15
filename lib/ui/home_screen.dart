@@ -30,8 +30,8 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> resultados = [];
   bool mostrarAgregar = false;
 
-  String? coverPreviewUrl; // la elegida final (ideal 500)
-  String? mbidFound;
+  String? coverPreviewUrl; // carátula elegida (500)
+  String? mbidFound; // aquí guardamos el releaseGroupId (sirve como ID)
   bool buscandoCover = false;
 
   File? fondo;
@@ -193,10 +193,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (picked == null) return;
 
-    // aplicar la selección
     setState(() {
       coverPreviewUrl = picked.coverUrl500;
-      mbidFound = picked.mbid;
+      // ✅ YA NO USAMOS picked.mbid (eso rompía). Guardamos releaseGroupId.
+      mbidFound = picked.releaseGroupId;
     });
 
     if (yearCtrl.text.trim().isEmpty && (picked.year?.isNotEmpty ?? false)) {
@@ -235,12 +235,11 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    // Si hay una sola, ponerla directo. Si hay varias, elegir.
     if (options.length == 1) {
       final c = options.first;
       setState(() {
         coverPreviewUrl = c.coverUrl500;
-        mbidFound = c.mbid;
+        mbidFound = c.releaseGroupId; // ✅
       });
       if (yearCtrl.text.trim().isEmpty && (c.year?.isNotEmpty ?? false)) {
         yearCtrl.text = c.year!;
@@ -327,16 +326,14 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Text('LP',
-                    style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700)),
-                Text('$total',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900)),
+                const Text(
+                  'LP',
+                  style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w700),
+                ),
+                Text(
+                  '$total',
+                  style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900),
+                ),
               ],
             ),
           ),
@@ -361,9 +358,7 @@ class _HomeScreenState extends State<HomeScreen> {
               Icon(icon),
               const SizedBox(width: 12),
               Expanded(
-                child: Text(text,
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w700)),
+                child: Text(text, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
               ),
               const Icon(Icons.chevron_right),
             ],
@@ -378,10 +373,7 @@ class _HomeScreenState extends State<HomeScreen> {
         btn(Icons.search, 'Buscar vinilo', () => setState(() => vista = Vista.buscar)),
         const SizedBox(height: 10),
         btn(Icons.library_music, 'Discografías', () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const DiscographyScreen()),
-          );
+          Navigator.push(context, MaterialPageRoute(builder: (_) => const DiscographyScreen()));
         }),
         const SizedBox(height: 10),
         btn(Icons.list, 'Mostrar lista de vinilos', () => setState(() => vista = Vista.lista)),
@@ -442,8 +434,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Resultados en tu colección:',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const Text('Resultados en tu colección:', style: TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
                 ...resultados.map((v) => Padding(
                       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -505,8 +496,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(width: 12),
                   const Expanded(
-                    child: Text('Carátula elegida ✅',
-                        style: TextStyle(fontWeight: FontWeight.w800)),
+                    child: Text('Carátula elegida ✅', style: TextStyle(fontWeight: FontWeight.w800)),
                   ),
                 ],
               ),
@@ -528,9 +518,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
           ElevatedButton(
             onPressed: buscandoCover ? null : buscarCoverYAno,
-            child: Text(
-              buscandoCover ? 'Buscando...' : 'Buscar carátula y año (internet)',
-            ),
+            child: Text(buscandoCover ? 'Buscando...' : 'Buscar carátula y año (internet)'),
           ),
           const SizedBox(height: 10),
 
@@ -562,8 +550,7 @@ class _HomeScreenState extends State<HomeScreen> {
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
         final items = snap.data!;
         if (items.isEmpty) {
-          return const Text('No tienes vinilos todavía.',
-              style: TextStyle(color: Colors.white));
+          return const Text('No tienes vinilos todavía.', style: TextStyle(color: Colors.white));
         }
 
         return ListView.builder(
@@ -578,8 +565,7 @@ class _HomeScreenState extends State<HomeScreen> {
               color: Colors.white.withOpacity(0.88),
               child: ListTile(
                 leading: _leadingCover(v),
-                title: Text(
-                    'LP N° ${v['numero']} — ${v['artista']} — ${v['album']}$yearTxt'),
+                title: Text('LP N° ${v['numero']} — ${v['artista']} — ${v['album']}$yearTxt'),
                 trailing: conBorrar
                     ? IconButton(
                         icon: const Icon(Icons.delete),
@@ -626,8 +612,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 10),
                       TextButton(
                         onPressed: () => setState(() => vista = Vista.inicio),
-                        child: const Text('Volver',
-                            style: TextStyle(color: Colors.white)),
+                        child: const Text('Volver', style: TextStyle(color: Colors.white)),
                       ),
                     ],
                     if (vista == Vista.borrar) ...[
@@ -635,8 +620,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 10),
                       TextButton(
                         onPressed: () => setState(() => vista = Vista.inicio),
-                        child: const Text('Volver',
-                            style: TextStyle(color: Colors.white)),
+                        child: const Text('Volver', style: TextStyle(color: Colors.white)),
                       ),
                     ],
                   ],
