@@ -89,3 +89,22 @@ workflows:
 
     artifacts:
       - build/app/outputs/flutter-apk/app-release.apk
+            - name: Verificar INTERNET en manifest final
+        script: |
+          echo "Buscando merged manifest de la APP..."
+          MERGED="$(find build/app -path "*merged_manifests*" -path "*release*" -name "AndroidManifest.xml" | head -n 1)"
+          echo "MERGED=$MERGED"
+
+          if [ -z "$MERGED" ]; then
+            echo "No encontré el merged manifest de la app (build/app)."
+            exit 1
+          fi
+
+          if grep -q "android.permission.INTERNET" "$MERGED"; then
+            echo "OK ✅ El merged manifest de la APP tiene INTERNET."
+          else
+            echo "ERROR ❌ El merged manifest de la APP NO tiene INTERNET."
+            head -n 120 "$MERGED"
+            exit 1
+          fi
+
