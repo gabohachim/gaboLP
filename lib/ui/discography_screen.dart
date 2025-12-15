@@ -24,11 +24,7 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
   bool loadingArtists = false;
   bool loadingAlbums = false;
 
-  // Artista seleccionado (para agregar LP con el artista correcto)
   String selectedArtistName = '';
-
-  // Set de tu colección para saber si ya lo tienes
-  // clave: "artista|album" normalizado
   Set<String> owned = {};
 
   @override
@@ -118,11 +114,10 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
 
     if (!mounted) return;
     setState(() {
-      albums = res;
+      albums = res; // ya viene ordenado por año ✅
       loadingAlbums = false;
     });
 
-    // Actualizar tu colección para marcar cuáles ya tienes
     await _refreshOwned();
 
     if (res.isEmpty) snack('No encontré álbumes para ese artista');
@@ -138,17 +133,14 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
     final album = al.title.trim();
     final year = (al.year ?? '').trim();
 
-    // Doble chequeo por si ya lo tienes
     final k = _key(artist, album);
     if (owned.contains(k)) {
       snack('Ya lo tienes ✅');
       return;
     }
 
-    // Descargar carátula (si existe)
     String? coverPath;
     if (al.coverUrl != null && al.coverUrl!.trim().isNotEmpty) {
-      // Si quieres mejor calidad: cambia front-250 por front-500 o front
       final url = al.coverUrl!.replaceAll('front-250', 'front-500');
       coverPath = await _downloadCoverToLocal(url);
     }
@@ -162,12 +154,9 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
         mbid: null,
       );
 
-      // Marcar como “ya lo tienes”
       setState(() => owned.add(k));
-
       snack('Agregado a tu colección ✅');
     } catch (_) {
-      // Por si la BD dice que ya existe
       setState(() => owned.add(k));
       snack('Ya lo tenías (Artista + Álbum)');
     }
@@ -196,7 +185,6 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
 
             if (loadingArtists) const LinearProgressIndicator(),
 
-            // Elegir artista correcto
             if (artistResults.isNotEmpty && albums.isEmpty) ...[
               const Align(
                 alignment: Alignment.centerLeft,
@@ -226,7 +214,6 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
 
             if (loadingAlbums) const LinearProgressIndicator(),
 
-            // Discografía (álbumes)
             if (albums.isNotEmpty) ...[
               const SizedBox(height: 6),
               Align(
@@ -242,7 +229,6 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
                   itemCount: albums.length,
                   itemBuilder: (context, i) {
                     final al = albums[i];
-
                     final isOwned = owned.contains(_key(selectedArtistName, al.title));
 
                     return Card(
@@ -261,16 +247,17 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
                               ),
                         title: Text(al.title),
                         subtitle: Text(al.year == null ? 'Año: —' : 'Año: ${al.year}'),
-                        // Tocar el álbum => canciones
                         onTap: () {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => AlbumTracksScreen(album: al),
+                              builder: (_) => AlbumTracksScreen(
+                                album: al,
+                                artistName: selectedArtistName, // ✅ aquí va
+                              ),
                             ),
                           );
                         },
-                        // ✅ Botón “Agregar LP” solo si NO lo tienes
                         trailing: isOwned
                             ? const Text('Ya lo tienes ✅',
                                 style: TextStyle(fontWeight: FontWeight.w700))
