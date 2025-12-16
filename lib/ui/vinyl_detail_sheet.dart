@@ -1,12 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-
 import '../services/discography_service.dart';
-import '../services/metadata_service.dart';
 
 class VinylDetailSheet extends StatefulWidget {
-  final Map<String, dynamic> vinyl; // fila de la BD
-
+  final Map<String, dynamic> vinyl;
   const VinylDetailSheet({super.key, required this.vinyl});
 
   @override
@@ -14,9 +11,9 @@ class VinylDetailSheet extends StatefulWidget {
 }
 
 class _VinylDetailSheetState extends State<VinylDetailSheet> {
-  bool loading = true;
-  String? errorMsg;
+  bool loadingTracks = false;
   List<TrackItem> tracks = [];
+  String? msg;
 
   @override
   void initState() {
@@ -25,173 +22,123 @@ class _VinylDetailSheetState extends State<VinylDetailSheet> {
   }
 
   Future<void> _loadTracks() async {
+    final mbid = (widget.vinyl['mbid'] as String?)?.trim() ?? '';
+    if (mbid.isEmpty) {
+      setState(() => msg = 'No hay ID (MBID) guardado para este LP, no puedo buscar canciones.');
+      return;
+    }
+
     setState(() {
-      loading = true;
-      errorMsg = null;
+      loadingTracks = true;
+      msg = null;
       tracks = [];
     });
 
-    try {
-      final artista = (widget.vinyl['artista'] as String?)?.trim() ?? '';
-      final album = (widget.vinyl['album'] as String?)?.trim() ?? '';
-      String? rgid = (widget.vinyl['mbid'] as String?)?.trim(); // aquí guardamos releaseGroupId
+    final list = await DiscographyService.getTracksFromReleaseGroup(mbid);
 
-      // Si no tenemos releaseGroupId guardado, lo intentamos obtener desde internet
-      if ((rgid == null || rgid.isEmpty) && artista.isNotEmpty && album.isNotEmpty) {
-        final options = await MetadataService.fetchCoverCandidates(
-          artist: artista,
-          album: album,
-        );
-        if (options.isNotEmpty) {
-          rgid = options.first.releaseGroupId;
-        }
-      }
+    if (!mounted) return;
 
-      if (rgid == null || rgid.isEmpty) {
-        setState(() {
-          loading = false;
-          errorMsg = 'No pude obtener el ID del álbum para buscar canciones.';
-        });
-        return;
-      }
-
-      final list = await DiscographyService.getTracksFromReleaseGroup(rgid);
-
-      setState(() {
-        tracks = list;
-        loading = false;
-        errorMsg = list.isEmpty ? 'No encontré canciones para este álbum.' : null;
-      });
-    } catch (_) {
-      setState(() {
-        loading = false;
-        errorMsg = 'Error al cargar las canciones.';
-      });
-    }
+    setState(() {
+      tracks = list;
+      loadingTracks = false;
+      if (list.isEmpty) msg = 'No encontré canciones para este disco.';
+    });
   }
 
-  Widget _coverWidget() {
+  Widget _cover() {
     final cp = (widget.vinyl['coverPath'] as String?)?.trim() ?? '';
     if (cp.isNotEmpty) {
       final f = File(cp);
       if (f.existsSync()) {
         return ClipRRect(
-          borderRadius: BorderRadius.circular(16),
-          child: Image.file(
-            f,
-            width: 160,
-            height: 160,
-            fit: BoxFit.cover,
-          ),
+          borderRadius: BorderRadius.circular(14),
+          child: Image.file(f, width: 120, height: 120, fit: BoxFit.cover),
         );
       }
     }
-    return Container(
-      width: 160,
-      height: 160,
-      decoration: BoxDecoration(
-        color: Colors.black12,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: const Icon(Icons.album, size: 70),
+    return const SizedBox(
+      width: 120,
+      height: 120,
+      child: Center(child: Icon(Icons.album, size: 52)),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final numero = widget.vinyl['numero'];
     final artista = (widget.vinyl['artista'] as String?) ?? '';
     final album = (widget.vinyl['album'] as String?) ?? '';
     final year = (widget.vinyl['year'] as String?)?.trim() ?? '';
+    final genre = (widget.vinyl['genre'] as String?)?.trim() ?? '';
+    final country = (widget.vinyl['country'] as String?)?.trim() ?? '';
+    final bio = (widget.vinyl['artistBio'] as String?)?.trim() ?? '';
 
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+        padding: const EdgeInsets.all(14),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Barra superior
-            Container(
-              width: 46,
-              height: 5,
-              decoration: BoxDecoration(
-                color: Colors.black26,
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            const SizedBox(height: 14),
-
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _coverWidget(),
-                const SizedBox(width: 14),
+                _cover(),
+                const SizedBox(width: 12),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'LP N° $numero',
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        artista,
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        album,
-                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-                      ),
-                      if (year.isNotEmpty) ...[
-                        const SizedBox(height: 6),
-                        Text('Año: $year', style: const TextStyle(fontWeight: FontWeight.w700)),
-                      ],
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          TextButton.icon(
-                            onPressed: _loadTracks,
-                            icon: const Icon(Icons.refresh),
-                            label: const Text('Actualizar canciones'),
-                          ),
-                        ],
-                      )
-                    ],
+                  child: Text(
+                    '$artista\n$album',
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
                   ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close),
                 ),
               ],
             ),
+            const SizedBox(height: 10),
 
-            const SizedBox(height: 14),
-            const Divider(),
-
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Canciones',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
-                  color: Colors.grey.shade800,
-                ),
-              ),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                _pill('Año', year.isEmpty ? '—' : year),
+                _pill('Género', genre.isEmpty ? '—' : genre),
+                _pill('País', country.isEmpty ? '—' : country),
+              ],
             ),
-            const SizedBox(height: 8),
 
-            if (loading) const LinearProgressIndicator(),
+            const SizedBox(height: 10),
 
-            if (!loading && errorMsg != null)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                child: Text(errorMsg!, style: const TextStyle(fontWeight: FontWeight.w700)),
+            if (bio.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.05),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.black12),
+                ),
+                child: Text(bio),
               ),
 
-            if (!loading && tracks.isNotEmpty)
-              Flexible(
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text('Canciones', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+                ),
+                IconButton(onPressed: _loadTracks, icon: const Icon(Icons.refresh)),
+              ],
+            ),
+
+            if (loadingTracks) const LinearProgressIndicator(),
+            if (!loadingTracks && msg != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(msg!),
+              ),
+
+            if (!loadingTracks && tracks.isNotEmpty)
+              Expanded(
                 child: ListView.separated(
-                  shrinkWrap: true,
                   itemCount: tracks.length,
                   separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (context, i) {
@@ -204,11 +151,21 @@ class _VinylDetailSheetState extends State<VinylDetailSheet> {
                   },
                 ),
               ),
-
-            const SizedBox(height: 6),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _pill(String k, String v) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.black12),
+      ),
+      child: Text('$k: $v', style: const TextStyle(fontWeight: FontWeight.w700)),
     );
   }
 }
