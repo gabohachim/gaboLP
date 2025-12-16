@@ -7,7 +7,12 @@ class ArtistHit {
   final String? country;
   final int? score;
 
-  ArtistHit({required this.id, required this.name, this.country, this.score});
+  ArtistHit({
+    required this.id,
+    required this.name,
+    this.country,
+    this.score,
+  });
 }
 
 class AlbumItem {
@@ -31,7 +36,11 @@ class TrackItem {
   final String title;
   final String? length;
 
-  TrackItem({required this.number, required this.title, this.length});
+  TrackItem({
+    required this.number,
+    required this.title,
+    this.length,
+  });
 }
 
 class ArtistInfo {
@@ -39,19 +48,24 @@ class ArtistInfo {
   final List<String> genres;
   final String? bio;
 
-  ArtistInfo({this.country, required this.genres, this.bio});
+  ArtistInfo({
+    this.country,
+    required this.genres,
+    this.bio,
+  });
 }
 
 class DiscographyService {
   static const _mbBase = 'https://musicbrainz.org/ws/2';
-
   static DateTime _lastCall = DateTime.fromMillisecondsSinceEpoch(0);
 
   static Future<void> _throttle() async {
     final now = DateTime.now();
     final diff = now.difference(_lastCall);
     if (diff.inMilliseconds < 1100) {
-      await Future.delayed(Duration(milliseconds: 1100 - diff.inMilliseconds));
+      await Future.delayed(
+        Duration(milliseconds: 1100 - diff.inMilliseconds),
+      );
     }
     _lastCall = DateTime.now();
   }
@@ -61,235 +75,215 @@ class DiscographyService {
         'Accept': 'application/json',
       };
 
-  static Future<http.Response> _getJson(Uri url) async {
+  static Future<http.Response> _get(Uri url) async {
     await _throttle();
     return http.get(url, headers: _headers());
   }
 
-  static bool _looksLikeYearTag(String s) {
-    final t = s.toLowerCase().trim();
-    if (t.isEmpty) return true;
-    if (t.contains('year')) return true;
-    if (t.contains('years')) return true;
-    final reDecade = RegExp(r'^\d{2,4}s$');
-    if (reDecade.hasMatch(t)) return true;
-    final reDigits = RegExp(r'\d');
-    if (reDigits.hasMatch(t)) return true;
-    return false;
-  }
-
-  static List<String> _pickGenres(List tags) {
-    final out = <String>[];
-    for (final t in tags) {
-      if (t is! Map<String, dynamic>) continue;
-      final name = (t['name'] as String?)?.trim();
-      if (name == null || name.isEmpty) continue;
-      if (_looksLikeYearTag(name)) continue;
-      out.add(name);
-      if (out.length >= 5) break;
-    }
-    return out;
-  }
-
-  static String _cover250(String rgid) =>
-      'https://coverartarchive.org/release-group/$rgid/front-250';
-  static String _cover500(String rgid) =>
-      'https://coverartarchive.org/release-group/$rgid/front-500';
-
-  // ✅ Wikipedia en español primero; si no, inglés
-  static Future<String?> _fetchWikipediaBioPreferES(String artistName) async {
-    final name = artistName.trim();
-    if (name.isEmpty) return null;
-
-    // intenta ES → luego EN
-    final langs = ['es', 'en'];
-
-    for (final lang in langs) {
-      try {
-        // 1) Buscar título
-        final searchUrl = Uri.parse(
-          'https://$lang.wikipedia.org/w/api.php?action=opensearch&search=${Uri.encodeQueryComponent(name)}&limit=1&namespace=0&format=json',
-        );
-        final sRes = await http.get(searchUrl, headers: {'User-Agent': 'GaBoLP/1.0'});
-        if (sRes.statusCode != 200) continue;
-
-        final j = jsonDecode(sRes.body);
-        if (j is! List || j.length < 2) continue;
-
-        final titles = j[1];
-        if (titles is! List || titles.isEmpty) continue;
-
-        final title = (titles.first as String?)?.trim();
-        if (title == null || title.isEmpty) continue;
-
-        // 2) Summary
-        final sumUrl = Uri.parse('https://$lang.wikipedia.org/api/rest_v1/page/summary/$title');
-        final sumRes = await http.get(sumUrl, headers: {'User-Agent': 'GaBoLP/1.0'});
-        if (sumRes.statusCode != 200) continue;
-
-        final data = jsonDecode(sumRes.body) as Map<String, dynamic>;
-
-        // si no existe, Wikipedia suele devolver "type": "https://mediawiki.org/wiki/HyperSwitch/errors/not_found"
-        final type = (data['type'] as String?) ?? '';
-        if (type.contains('not_found')) continue;
-
-        final extract = (data['extract'] as String?)?.trim();
-        if (extract == null || extract.isEmpty) continue;
-
-        return extract;
-      } catch (_) {
-        // sigue con el siguiente idioma
-        continue;
-      }
-    }
-
-    return null;
-  }
-
+  // ===============================
+  // 🔍 BUSCAR ARTISTAS (AUTOCOMPLETE)
+  // ===============================
   static Future<List<ArtistHit>> searchArtists(String name) async {
-    final n = name.trim();
-    if (n.isEmpty) return [];
+    final q = name.trim();
+    if (q.isEmpty) return [];
 
-    final url = Uri.parse('$_mbBase/artist/?query=${Uri.encodeQueryComponent(n)}&fmt=json&limit=12');
-    final res = await _getJson(url);
+    final url = Uri.parse(
+      '$_mbBase/artist/?query=${Uri.encodeQueryComponent(q)}&fmt=json&limit=10',
+    );
+    final res = await _get(url);
     if (res.statusCode != 200) return [];
 
-    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    final data = jsonDecode(res.body);
     final artists = (data['artists'] as List?) ?? [];
-    final out = <ArtistHit>[];
 
-    for (final a in artists) {
-      final m = a as Map<String, dynamic>;
-      final id = m['id'] as String?;
-      final name = m['name'] as String?;
-      if (id == null || name == null) continue;
-
-      out.add(ArtistHit(
-        id: id,
-        name: name,
-        country: (m['country'] as String?)?.trim(),
-        score: m['score'] as int?,
-      ));
-    }
-
-    out.sort((a, b) => (b.score ?? 0).compareTo(a.score ?? 0));
-    return out;
+    return artists.map<ArtistHit>((a) {
+      return ArtistHit(
+        id: a['id'],
+        name: a['name'],
+        country: a['country'],
+        score: a['score'],
+      );
+    }).toList()
+      ..sort((a, b) => (b.score ?? 0).compareTo(a.score ?? 0));
   }
 
-  static Future<ArtistInfo> getArtistInfoById(String artistId, {String? artistName}) async {
-    final id = artistId.trim();
-    if (id.isEmpty) return ArtistInfo(country: null, genres: [], bio: null);
+  // ==================================================
+  // ✅ COMPATIBILIDAD (ARREGLA TU ERROR DE COMPILACIÓN)
+  // ==================================================
+  static Future<ArtistInfo> getArtistInfo(String artistName) async {
+    final hits = await searchArtists(artistName);
+    if (hits.isEmpty) {
+      return ArtistInfo(country: null, genres: [], bio: null);
+    }
+    return getArtistInfoById(hits.first.id, artistName: hits.first.name);
+  }
 
-    final url = Uri.parse('$_mbBase/artist/$id?inc=tags&fmt=json');
-    final res = await _getJson(url);
+  // ==========================================
+  // 🎸 INFO ARTISTA (PAÍS, GÉNERO, RESEÑA)
+  // ==========================================
+  static Future<ArtistInfo> getArtistInfoById(
+    String artistId, {
+    String? artistName,
+  }) async {
+    final url = Uri.parse(
+      '$_mbBase/artist/$artistId?inc=tags&fmt=json',
+    );
+    final res = await _get(url);
 
     String? country;
     List<String> genres = [];
-    String? nameForBio = artistName;
+    String? name = artistName;
 
     if (res.statusCode == 200) {
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
-      nameForBio ??= (data['name'] as String?)?.trim();
-      country = (data['country'] as String?)?.trim();
+      final data = jsonDecode(res.body);
+      country = data['country'];
+      name ??= data['name'];
+
       final tags = (data['tags'] as List?) ?? [];
-      genres = _pickGenres(tags);
+      for (final t in tags) {
+        final g = (t['name'] as String).trim();
+        if (g.isEmpty) continue;
+        if (RegExp(r'\d').hasMatch(g)) continue; // evita "1990s"
+        genres.add(g);
+        if (genres.length == 4) break;
+      }
     }
 
-    final bio = (nameForBio == null || nameForBio!.isEmpty)
-        ? null
-        : await _fetchWikipediaBioPreferES(nameForBio!);
+    final bio = name == null ? null : await _fetchWikipediaBioES(name);
 
-    return ArtistInfo(country: country, genres: genres, bio: bio);
+    return ArtistInfo(
+      country: country,
+      genres: genres,
+      bio: bio,
+    );
   }
 
-  static Future<List<AlbumItem>> getDiscographyByArtistId(String artistId) async {
-    final id = artistId.trim();
-    if (id.isEmpty) return [];
-
-    final url = Uri.parse('$_mbBase/release-group/?artist=$id&fmt=json&limit=100');
-    final res = await _getJson(url);
+  // =====================================
+  // 📀 DISCOGRAFÍA (ORDENADA POR AÑO)
+  // =====================================
+  static Future<List<AlbumItem>> getDiscographyByArtistId(
+    String artistId,
+  ) async {
+    final url = Uri.parse(
+      '$_mbBase/release-group/?artist=$artistId&fmt=json&limit=100',
+    );
+    final res = await _get(url);
     if (res.statusCode != 200) return [];
 
-    final data = jsonDecode(res.body) as Map<String, dynamic>;
-    final rgs = (data['release-groups'] as List?) ?? [];
+    final data = jsonDecode(res.body);
+    final groups = (data['release-groups'] as List?) ?? [];
 
-    final out = <AlbumItem>[];
-    for (final x in rgs) {
-      final m = x as Map<String, dynamic>;
-      final primaryType = (m['primary-type'] as String?)?.toLowerCase().trim();
-      if (primaryType != 'album') continue;
+    final albums = <AlbumItem>[];
 
-      final rgid = m['id'] as String?;
-      final title = m['title'] as String?;
-      if (rgid == null || title == null) continue;
+    for (final g in groups) {
+      if ((g['primary-type'] ?? '').toString().toLowerCase() != 'album') {
+        continue;
+      }
 
-      final frd = (m['first-release-date'] as String?) ?? '';
-      final year = frd.length >= 4 ? frd.substring(0, 4) : null;
+      final id = g['id'];
+      final title = g['title'];
+      final date = g['first-release-date'] ?? '';
+      final year = date.length >= 4 ? date.substring(0, 4) : null;
 
-      out.add(AlbumItem(
-        releaseGroupId: rgid,
-        title: title,
-        year: year,
-        cover250: _cover250(rgid),
-        cover500: _cover500(rgid),
-      ));
+      albums.add(
+        AlbumItem(
+          releaseGroupId: id,
+          title: title,
+          year: year,
+          cover250:
+              'https://coverartarchive.org/release-group/$id/front-250',
+          cover500:
+              'https://coverartarchive.org/release-group/$id/front-500',
+        ),
+      );
     }
 
-    out.sort((a, b) {
+    albums.sort((a, b) {
       final ay = int.tryParse(a.year ?? '') ?? 9999;
       final by = int.tryParse(b.year ?? '') ?? 9999;
-      final c = ay.compareTo(by);
-      if (c != 0) return c;
-      return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+      return ay.compareTo(by);
     });
 
-    return out;
+    return albums;
   }
 
-  static Future<List<TrackItem>> getTracksFromReleaseGroup(String rgid) async {
-    final urlRg = Uri.parse('$_mbBase/release-group/$rgid?inc=releases&fmt=json');
-    final resRg = await _getJson(urlRg);
+  // =========================
+  // 🎵 TRACKLIST DEL ÁLBUM
+  // =========================
+  static Future<List<TrackItem>> getTracksFromReleaseGroup(
+    String rgid,
+  ) async {
+    final urlRg = Uri.parse(
+      '$_mbBase/release-group/$rgid?inc=releases&fmt=json',
+    );
+    final resRg = await _get(urlRg);
     if (resRg.statusCode != 200) return [];
 
-    final dataRg = jsonDecode(resRg.body) as Map<String, dynamic>;
-    final releases = (dataRg['releases'] as List?) ?? [];
+    final releases = (jsonDecode(resRg.body)['releases'] as List?) ?? [];
     if (releases.isEmpty) return [];
 
-    final firstReleaseId = (releases.first as Map<String, dynamic>)['id'] as String?;
-    if (firstReleaseId == null) return [];
+    final releaseId = releases.first['id'];
 
-    final urlRel = Uri.parse('$_mbBase/release/$firstReleaseId?inc=recordings&fmt=json');
-    final resRel = await _getJson(urlRel);
+    final urlRel = Uri.parse(
+      '$_mbBase/release/$releaseId?inc=recordings&fmt=json',
+    );
+    final resRel = await _get(urlRel);
     if (resRel.statusCode != 200) return [];
 
-    final dataRel = jsonDecode(resRel.body) as Map<String, dynamic>;
-    final media = (dataRel['media'] as List?) ?? [];
+    final media = (jsonDecode(resRel.body)['media'] as List?) ?? [];
     if (media.isEmpty) return [];
 
-    final tracksOut = <TrackItem>[];
+    final tracks = <TrackItem>[];
     int n = 1;
 
     for (final m in media) {
-      final mm = m as Map<String, dynamic>;
-      final tracks = (mm['tracks'] as List?) ?? [];
-      for (final t in tracks) {
-        final tt = t as Map<String, dynamic>;
-        final title = (tt['title'] as String?) ?? 'Track';
-        final lenMs = tt['length'] as int?;
-        tracksOut.add(TrackItem(
-          number: n++,
-          title: title,
-          length: (lenMs == null) ? null : _fmtMs(lenMs),
-        ));
+      for (final t in (m['tracks'] as List? ?? [])) {
+        tracks.add(
+          TrackItem(
+            number: n++,
+            title: t['title'],
+            length: _fmtMs(t['length']),
+          ),
+        );
       }
     }
-    return tracksOut;
+    return tracks;
   }
 
-  static String _fmtMs(int ms) {
-    final totalSec = (ms / 1000).round();
-    final m = totalSec ~/ 60;
-    final s = totalSec % 60;
-    return '${m}:${s.toString().padLeft(2, '0')}';
+  static String? _fmtMs(dynamic ms) {
+    if (ms == null) return null;
+    final s = (ms / 1000).round();
+    return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+  }
+
+  // =====================================
+  // 📝 WIKIPEDIA EN ESPAÑOL (PRIMERO)
+  // =====================================
+  static Future<String?> _fetchWikipediaBioES(String name) async {
+    for (final lang in ['es', 'en']) {
+      try {
+        final search = Uri.parse(
+          'https://$lang.wikipedia.org/w/api.php?action=opensearch&search=${Uri.encodeQueryComponent(name)}&limit=1&format=json',
+        );
+        final sRes = await http.get(search);
+        if (sRes.statusCode != 200) continue;
+
+        final data = jsonDecode(sRes.body);
+        if (data[1].isEmpty) continue;
+
+        final title = data[1][0];
+        final sum = Uri.parse(
+          'https://$lang.wikipedia.org/api/rest_v1/page/summary/$title',
+        );
+        final sumRes = await http.get(sum);
+        if (sumRes.statusCode != 200) continue;
+
+        final extract = jsonDecode(sumRes.body)['extract'];
+        if (extract != null && extract.toString().isNotEmpty) {
+          return extract;
+        }
+      } catch (_) {}
+    }
+    return null;
   }
 }
