@@ -18,7 +18,7 @@ class VinylDb {
 
     return openDatabase(
       path,
-      version: 4, // ✅ subimos versión por columnas nuevas
+      version: 4,
       onCreate: (d, v) async {
         await d.execute('''
           CREATE TABLE vinyls(
@@ -37,8 +37,9 @@ class VinylDb {
         await d.execute('CREATE INDEX idx_album ON vinyls(album);');
       },
       onUpgrade: (d, oldV, newV) async {
-        // ✅ migraciones sin perder datos
+        // migraciones sin perder datos
         if (oldV < 3) {
+          // si vienes de una versión antigua, agrega genre si no existe
           await d.execute('ALTER TABLE vinyls ADD COLUMN genre TEXT;');
         }
         if (oldV < 4) {
