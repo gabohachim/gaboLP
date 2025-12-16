@@ -1,7 +1,14 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../db/vinyl_db.dart';
 import '../services/discography_service.dart';
+import '../services/metadata_service.dart';
 import 'album_tracks_screen.dart';
 
 class DiscographyScreen extends StatefulWidget {
@@ -14,7 +21,11 @@ class DiscographyScreen extends StatefulWidget {
 class _DiscographyScreenState extends State<DiscographyScreen> {
   final artistCtrl = TextEditingController();
 
-  bool loading = false;
+  Timer? _debounce;
+  bool searchingArtists = false;
+  List<ArtistHit> artistResults = [];
+
+  bool loadingAlbums = false;
   String? msg;
 
   ArtistHit? pickedArtist;
@@ -23,44 +34,55 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
     artistCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> buscar() async {
-    final name = artistCtrl.text.trim();
-    if (name.isEmpty) return;
-
-    setState(() {
-      loading = true;
-      msg = null;
-      pickedArtist = null;
-      artistInfo = null;
-      albums = [];
-    });
-
-    final hits = await DiscographyService.searchArtists(name);
-    if (hits.isEmpty) {
+  void _onArtistTextChanged(String value) {
+    _debounce?.cancel();
+    final q = value.trim();
+    if (q.isEmpty) {
       setState(() {
-        loading = false;
-        msg = 'No encontré ese artista.';
+        artistResults = [];
+        searchingArtists = false;
       });
       return;
     }
 
-    // Elegimos el mejor (score más alto)
-    final best = hits.first;
+    _debounce = Timer(const Duration(milliseconds: 450), () async {
+      setState(() => searchingArtists = true);
+      final hits = await DiscographyService.searchArtists(q);
+      if (!mounted) return;
+      setState(() {
+        artistResults = hits;
+        searchingArtists = false;
+      });
+    });
+  }
 
-    final info = await DiscographyService.getArtistInfo(best.name);
-    final list = await DiscographyService.getDiscographyByArtistId(best.id);
+  Future<void> _pickArtist(ArtistHit a) async {
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      pickedArtist = a;
+      artistCtrl.text = a.name;
+      artistResults = [];
+      albums = [];
+      msg = null;
+      artistInfo = null;
+      loadingAlbums = true;
+    });
+
+    final info = await DiscographyService.getArtistInfoById(a.id, artistName: a.name);
+    final list = await DiscographyService.getDiscographyByArtistId(a.id);
 
     if (!mounted) return;
 
     setState(() {
-      pickedArtist = best;
       artistInfo = info;
       albums = list;
-      loading = false;
+      loadingAlbums = false;
       msg = list.isEmpty ? 'No encontré álbumes.' : null;
     });
   }
@@ -69,15 +91,94 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
     return VinylDb.instance.existsExact(artista: artist, album: album);
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final showArtistName = pickedArtist?.name ?? artistCtrl.text.trim();
+  void _showBioDialog() {
+    final bio = (artistInfo?.bio ?? '').trim();
+    if (bio.isEmpty) return;
+
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Reseña — ${pickedArtist?.name ?? ''}'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(child: Text(bio)),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
+        ],
+      ),
+    );
+  }
+
+  Future<String?> _downloadCoverToLocal(String url) async {
+    try {
+      final res = await http.get(Uri.parse(url));
+      if (res.statusCode != 200) return null;
+
+      final dir = await getApplicationDocumentsDirectory();
+      final coversDir = Directory(p.join(dir.path, 'covers'));
+      if (!await coversDir.exists()) await coversDir.create(recursive: true);
+
+      final ct = res.headers['content-type'] ?? '';
+      final ext = ct.contains('png') ? 'png' : 'jpg';
+      final filename = 'cover_${DateTime.now().millisecondsSinceEpoch}.$ext';
+
+      final file = File(p.join(coversDir.path, filename));
+      await file.writeAsBytes(res.bodyBytes);
+      return file.path;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _addAlbumToCollection(AlbumItem al) async {
+    final artistName = pickedArtist?.name ?? artistCtrl.text.trim();
+    if (artistName.isEmpty) return;
+
+    // Traemos metadata (año, género, cover, mbid) + info artista (país, reseña)
+    final meta = await MetadataService.fetchAutoMetadata(artist: artistName, album: al.title);
 
     final country = (artistInfo?.country ?? pickedArtist?.country ?? '').trim();
-    final genres = artistInfo?.genres ?? [];
-    String bio = (artistInfo?.bio ?? '').trim();
+    String? bioShort;
+    final bio = (artistInfo?.bio ?? '').trim();
+    if (bio.isNotEmpty) bioShort = bio.length > 220 ? '${bio.substring(0, 220)}…' : bio;
 
-    if (bio.length > 320) bio = '${bio.substring(0, 320)}…';
+    final year = (meta.year ?? al.year)?.trim();
+    final genre = (meta.genre ?? '').trim().isEmpty ? null : meta.genre!.trim();
+
+    // Descargar cover local
+    String? coverPath;
+    final coverUrl = (meta.cover500 ?? al.cover500).trim();
+    if (coverUrl.isNotEmpty) {
+      coverPath = await _downloadCoverToLocal(coverUrl);
+    }
+
+    try {
+      await VinylDb.instance.insertVinyl(
+        artista: artistName,
+        album: al.title,
+        year: (year == null || year.isEmpty) ? null : year,
+        genre: genre,
+        country: country.isEmpty ? null : country,
+        artistBio: bioShort,
+        coverPath: coverPath,
+        mbid: meta.releaseGroupId ?? al.releaseGroupId,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Agregado ✅')));
+      setState(() {});
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ya lo tienes ✅')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final artistName = pickedArtist?.name ?? artistCtrl.text.trim();
+    final country = (artistInfo?.country ?? pickedArtist?.country ?? '').trim();
+    final genres = artistInfo?.genres ?? [];
+    final hasBio = ((artistInfo?.bio ?? '').trim().isNotEmpty);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Discografías')),
@@ -87,16 +188,42 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
           children: [
             TextField(
               controller: artistCtrl,
+              onChanged: _onArtistTextChanged,
               decoration: const InputDecoration(
-                labelText: 'Banda / Artista',
+                labelText: 'Busca banda (escribe letras)',
                 border: OutlineInputBorder(),
               ),
             ),
-            const SizedBox(height: 10),
-            ElevatedButton(
-              onPressed: loading ? null : buscar,
-              child: Text(loading ? 'Buscando...' : 'Buscar'),
-            ),
+            const SizedBox(height: 8),
+
+            if (searchingArtists) const LinearProgressIndicator(),
+
+            // ✅ lista de bandas mientras escribe
+            if (artistResults.isNotEmpty)
+              Container(
+                margin: const EdgeInsets.only(top: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: Colors.black12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: artistResults.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, i) {
+                    final a = artistResults[i];
+                    final c = (a.country ?? '').trim();
+                    return ListTile(
+                      dense: true,
+                      title: Text(a.name),
+                      subtitle: Text(c.isEmpty ? '' : 'País: $c'),
+                      onTap: () => _pickArtist(a),
+                    );
+                  },
+                ),
+              ),
+
             const SizedBox(height: 10),
 
             if (pickedArtist != null)
@@ -107,30 +234,24 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(color: Colors.black12),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Row(
                   children: [
-                    Text(showArtistName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
-                    const SizedBox(height: 6),
-                    Text('País: ${country.isEmpty ? '—' : country}', style: const TextStyle(fontWeight: FontWeight.w700)),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Género(s): ${genres.isEmpty ? '—' : genres.join(', ')}',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 8),
-
-                    // ✅ Reseña plegable para que NO tape los discos
-                    if (bio.isNotEmpty)
-                      ExpansionTile(
-                        tilePadding: EdgeInsets.zero,
-                        title: const Text('Ver reseña', style: TextStyle(fontWeight: FontWeight.w800)),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: Text(bio),
-                          ),
+                          Text(artistName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                          const SizedBox(height: 4),
+                          Text('País: ${country.isEmpty ? '—' : country}'),
+                          Text('Género(s): ${genres.isEmpty ? '—' : genres.join(', ')}'),
                         ],
+                      ),
+                    ),
+                    if (hasBio)
+                      ElevatedButton.icon(
+                        onPressed: _showBioDialog,
+                        icon: const Icon(Icons.info_outline),
+                        label: const Text('Reseña'),
                       ),
                   ],
                 ),
@@ -145,60 +266,53 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
             const SizedBox(height: 10),
 
             Expanded(
-              child: ListView.builder(
-                itemCount: albums.length,
-                itemBuilder: (context, i) {
-                  final a = albums[i];
-                  final year = a.year ?? '—';
+              child: loadingAlbums
+                  ? const Center(child: CircularProgressIndicator())
+                  : ListView.builder(
+                      itemCount: albums.length,
+                      itemBuilder: (context, i) {
+                        final al = albums[i];
+                        final year = al.year ?? '—';
 
-                  return Card(
-                    child: ListTile(
-                      leading: ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: Image.network(
-                          a.cover250,
-                          width: 56,
-                          height: 56,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const Icon(Icons.album),
-                        ),
-                      ),
-                      title: Text(a.title),
-                      subtitle: Text('Año: $year'),
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => AlbumTracksScreen(album: a, artistName: showArtistName),
+                        return Card(
+                          child: ListTile(
+                            leading: ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: Image.network(
+                                al.cover250,
+                                width: 56,
+                                height: 56,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => const Icon(Icons.album),
+                              ),
+                            ),
+                            title: Text(al.title),
+                            subtitle: Text('Año: $year'),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => AlbumTracksScreen(album: al, artistName: artistName),
+                                ),
+                              );
+                            },
+                            trailing: FutureBuilder<bool>(
+                              future: _yaLoTengo(artistName, al.title),
+                              builder: (context, snap2) {
+                                final have = snap2.data ?? false;
+                                if (have) {
+                                  return const Text('Ya lo tienes ✅', style: TextStyle(fontWeight: FontWeight.w800));
+                                }
+                                return TextButton(
+                                  onPressed: () => _addAlbumToCollection(al),
+                                  child: const Text('Agregar LP'),
+                                );
+                              },
+                            ),
                           ),
                         );
                       },
-                      trailing: FutureBuilder<bool>(
-                        future: _yaLoTengo(showArtistName, a.title),
-                        builder: (context, snap2) {
-                          final have = snap2.data ?? false;
-                          if (have) return const Text('Ya lo tienes ✅', style: TextStyle(fontWeight: FontWeight.w800));
-                          return TextButton(
-                            onPressed: () async {
-                              try {
-                                await VinylDb.instance.insertVinyl(
-                                  artista: showArtistName,
-                                  album: a.title,
-                                  year: a.year,
-                                  coverPath: null,
-                                  mbid: a.releaseGroupId,
-                                );
-                                if (mounted) setState(() {});
-                              } catch (_) {}
-                            },
-                            child: const Text('Agregar LP'),
-                          );
-                        },
-                      ),
                     ),
-                  );
-                },
-              ),
             ),
           ],
         ),
