@@ -32,7 +32,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String lastAlbum = '';
 
   String? coverPreviewUrl; // url elegida (500)
-  String? mbidFound;       // aquí guardamos releaseGroupId
+  String? mbidFound; // releaseGroupId
   bool buscandoCover = false;
 
   @override
@@ -48,7 +48,7 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
   }
 
-  // -------------------- Descarga y guarda carátula --------------------
+  // -------------------- Descargar y guardar carátula --------------------
 
   Future<String?> _downloadCoverToLocal(String url) async {
     try {
@@ -94,10 +94,10 @@ class _HomeScreenState extends State<HomeScreen> {
       lastArtist = artista;
       lastAlbum = album;
 
-      // solo permitimos agregar cuando hay artista+álbum y no existe
+      // permitir agregar solo si hay artista+álbum y no existe
       mostrarAgregar = res.isEmpty && artista.isNotEmpty && album.isNotEmpty;
 
-      // reset de preview
+      // reset preview
       coverPreviewUrl = null;
       mbidFound = null;
       buscandoCover = false;
@@ -270,7 +270,7 @@ class _HomeScreenState extends State<HomeScreen> {
         artista: artista,
         album: album,
         year: year.isEmpty ? null : year,
-        coverPath: localCoverPath, // ✅ ahora sí se guarda
+        coverPath: localCoverPath,
         mbid: mbidFound,
       );
 
@@ -386,6 +386,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return const Icon(Icons.album);
   }
 
+  // ✅ ARREGLO 1: resultados muestran año
   Widget vistaBuscar() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -413,7 +414,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ElevatedButton(onPressed: buscar, child: const Text('Buscar')),
         const SizedBox(height: 12),
 
-        // Resultados si existe
         if (resultados.isNotEmpty)
           Container(
             padding: const EdgeInsets.all(12),
@@ -426,28 +426,34 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 const Text('Resultados en tu colección:', style: TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
-                ...resultados.map((v) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: Row(
-                        children: [
-                          _leadingCover(v),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              'LP N° ${v['numero']} — ${v['artista']} — ${v['album']}',
-                              style: const TextStyle(fontWeight: FontWeight.w600),
-                            ),
+
+                // ✅ aquí va el arreglo del año:
+                ...resultados.map((v) {
+                  final y = (v['year'] as String?)?.trim() ?? '';
+                  final yTxt = y.isEmpty ? '' : ' ($y)';
+
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      children: [
+                        _leadingCover(v),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'LP N° ${v['numero']} — ${v['artista']} — ${v['album']}$yTxt',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
                           ),
-                        ],
-                      ),
-                    )),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
               ],
             ),
           ),
 
         const SizedBox(height: 12),
 
-        // Agregar si no existe
         if (mostrarAgregar) ...[
           Container(
             padding: const EdgeInsets.all(12),
@@ -513,21 +519,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
           ElevatedButton(onPressed: agregar, child: const Text('Agregar vinilo')),
         ],
-
-        const SizedBox(height: 10),
-        TextButton(
-          onPressed: () => setState(() {
-            vista = Vista.inicio;
-            resultados = [];
-            mostrarAgregar = false;
-            coverPreviewUrl = null;
-            mbidFound = null;
-            buscandoCover = false;
-            lastArtist = '';
-            lastAlbum = '';
-          }),
-          child: const Text('Volver', style: TextStyle(color: Colors.white)),
-        ),
       ],
     );
   }
@@ -556,8 +547,6 @@ class _HomeScreenState extends State<HomeScreen> {
               child: ListTile(
                 leading: _leadingCover(v),
                 title: Text('LP N° ${v['numero']} — ${v['artista']} — ${v['album']}$yearTxt'),
-
-                // ✅ click abre ventana con carátula + canciones
                 onTap: () {
                   showModalBottomSheet(
                     context: context,
@@ -572,7 +561,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   );
                 },
-
                 trailing: conBorrar
                     ? IconButton(
                         icon: const Icon(Icons.delete),
@@ -591,9 +579,50 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ✅ ARREGLO 2: AppBar + botón flotante Inicio (para listas largas)
+  PreferredSizeWidget? _buildAppBar() {
+    if (vista == Vista.inicio) return null;
+
+    String title;
+    switch (vista) {
+      case Vista.buscar:
+        title = 'Buscar vinilos';
+        break;
+      case Vista.lista:
+        title = 'Lista de vinilos';
+        break;
+      case Vista.borrar:
+        title = 'Borrar vinilos';
+        break;
+      default:
+        title = 'GaBoLP';
+    }
+
+    return AppBar(
+      title: Text(title),
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back),
+        onPressed: () => setState(() => vista = Vista.inicio),
+      ),
+    );
+  }
+
+  Widget? _buildFab() {
+    if (vista == Vista.lista || vista == Vista.borrar) {
+      return FloatingActionButton.extended(
+        onPressed: () => setState(() => vista = Vista.inicio),
+        icon: const Icon(Icons.home),
+        label: const Text('Inicio'),
+      );
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: _buildAppBar(),
+      floatingActionButton: _buildFab(),
       body: Stack(
         children: [
           Positioned.fill(child: Container(color: Colors.grey.shade300)),
@@ -605,28 +634,23 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    contadorLp(),
-                    const SizedBox(height: 14),
+                    // Si estás en inicio, mostramos contador arriba (como siempre)
+                    if (vista == Vista.inicio) ...[
+                      contadorLp(),
+                      const SizedBox(height: 14),
+                      botonesInicio(),
+                    ],
 
-                    if (vista == Vista.inicio) botonesInicio(),
-                    if (vista == Vista.buscar) vistaBuscar(),
+                    if (vista == Vista.buscar) ...[
+                      vistaBuscar(),
+                    ],
 
                     if (vista == Vista.lista) ...[
                       listaCompleta(conBorrar: false),
-                      const SizedBox(height: 10),
-                      TextButton(
-                        onPressed: () => setState(() => vista = Vista.inicio),
-                        child: const Text('Volver', style: TextStyle(color: Colors.white)),
-                      ),
                     ],
 
                     if (vista == Vista.borrar) ...[
                       listaCompleta(conBorrar: true),
-                      const SizedBox(height: 10),
-                      TextButton(
-                        onPressed: () => setState(() => vista = Vista.inicio),
-                        child: const Text('Volver', style: TextStyle(color: Colors.white)),
-                      ),
                     ],
                   ],
                 ),
