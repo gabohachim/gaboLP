@@ -1,8 +1,4 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 
 import '../db/vinyl_db.dart';
 import '../services/discography_service.dart';
@@ -16,154 +12,85 @@ class DiscographyScreen extends StatefulWidget {
 }
 
 class _DiscographyScreenState extends State<DiscographyScreen> {
-  final bandCtrl = TextEditingController();
+  final artistCtrl = TextEditingController();
 
-  List<ArtistHit> artistResults = [];
+  bool loading = false;
+  String? msg;
+
+  ArtistInfo? artistInfo;
   List<AlbumItem> albums = [];
-
-  bool loadingArtists = false;
-  bool loadingAlbums = false;
-
-  String selectedArtistName = '';
-  Set<String> owned = {};
 
   @override
   void dispose() {
-    bandCtrl.dispose();
+    artistCtrl.dispose();
     super.dispose();
   }
 
-  void snack(String t) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
-  }
-
-  String _norm(String s) => s.trim().toLowerCase();
-  String _key(String artist, String album) => '${_norm(artist)}|${_norm(album)}';
-
-  Future<void> _refreshOwned() async {
-    final all = await VinylDb.instance.getAll();
-    final set = <String>{};
-    for (final v in all) {
-      final a = (v['artista'] as String?) ?? '';
-      final al = (v['album'] as String?) ?? '';
-      if (a.trim().isNotEmpty && al.trim().isNotEmpty) {
-        set.add(_key(a, al));
-      }
-    }
-    if (!mounted) return;
-    setState(() => owned = set);
-  }
-
-  Future<String?> _downloadCoverToLocal(String url) async {
-    try {
-      final res = await http.get(Uri.parse(url));
-      if (res.statusCode != 200) return null;
-
-      final dir = await getApplicationDocumentsDirectory();
-      final coversDir = Directory(p.join(dir.path, 'covers'));
-      if (!await coversDir.exists()) {
-        await coversDir.create(recursive: true);
-      }
-
-      final ct = res.headers['content-type'] ?? '';
-      final ext = ct.contains('png') ? 'png' : 'jpg';
-
-      final filename = 'cover_${DateTime.now().millisecondsSinceEpoch}.$ext';
-      final file = File(p.join(coversDir.path, filename));
-      await file.writeAsBytes(res.bodyBytes);
-      return file.path;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<void> buscarArtista() async {
-    final name = bandCtrl.text.trim();
-    if (name.isEmpty) {
-      snack('Escribe el nombre de la banda/artista');
-      return;
-    }
+  Future<void> buscar() async {
+    final name = artistCtrl.text.trim();
+    if (name.isEmpty) return;
 
     setState(() {
-      loadingArtists = true;
-      artistResults = [];
+      loading = true;
+      msg = null;
+      artistInfo = null;
       albums = [];
-      selectedArtistName = '';
     });
 
-    final res = await DiscographyService.searchArtist(name);
+    final info = await DiscographyService.getArtistInfo(name);
+    final list = await DiscographyService.getDiscography(name); // ✅ por nombre del artista
 
     if (!mounted) return;
-    setState(() {
-      artistResults = res;
-      loadingArtists = false;
-    });
 
-    if (res.isEmpty) snack('No encontré artistas con ese nombre');
+    setState(() {
+      artistInfo = info;
+      albums = list;
+      loading = false;
+      msg = list.isEmpty ? 'No encontré discografía.' : null;
+    });
   }
 
-  Future<void> cargarDiscografia(ArtistHit artist) async {
-    setState(() {
-      loadingAlbums = true;
-      albums = [];
-      selectedArtistName = artist.name;
-    });
-
-    final res = await DiscographyService.getDiscographyAlbums(artist.id);
-
-    if (!mounted) return;
-    setState(() {
-      albums = res; // ya viene ordenado por año ✅
-      loadingAlbums = false;
-    });
-
-    await _refreshOwned();
-
-    if (res.isEmpty) snack('No encontré álbumes para ese artista');
+  Future<bool> _yaLoTengo(String artist, String album) async {
+    return VinylDb.instance.existsExact(artista: artist, album: album);
   }
 
-  Future<void> agregarLpDesdeDiscografia(AlbumItem al) async {
-    if (selectedArtistName.trim().isEmpty) {
-      snack('Primero elige un artista');
-      return;
-    }
+  Widget _artistHeader(String artistName) {
+    final c = artistInfo?.country;
+    final g = artistInfo?.genres ?? [];
+    final b = artistInfo?.bio;
 
-    final artist = selectedArtistName.trim();
-    final album = al.title.trim();
-    final year = (al.year ?? '').trim();
+    final countryTxt = (c == null || c.isEmpty) ? '—' : c;
+    final genreTxt = g.isEmpty ? '—' : g.join(', ');
 
-    final k = _key(artist, album);
-    if (owned.contains(k)) {
-      snack('Ya lo tienes ✅');
-      return;
-    }
+    String bioTxt = (b == null || b.isEmpty) ? 'Reseña: no disponible' : b;
+    if (bioTxt.length > 320) bioTxt = '${bioTxt.substring(0, 320)}…';
 
-    String? coverPath;
-    if (al.coverUrl != null && al.coverUrl!.trim().isNotEmpty) {
-      final url = al.coverUrl!.replaceAll('front-250', 'front-500');
-      coverPath = await _downloadCoverToLocal(url);
-    }
-
-    try {
-      await VinylDb.instance.insertVinyl(
-        artista: artist,
-        album: album,
-        year: year.isEmpty ? null : year,
-        coverPath: coverPath,
-        mbid: null,
-      );
-
-      setState(() => owned.add(k));
-      snack('Agregado a tu colección ✅');
-    } catch (_) {
-      setState(() => owned.add(k));
-      snack('Ya lo tenías (Artista + Álbum)');
-    }
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.black12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(artistName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 6),
+          Text('País: $countryTxt', style: const TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Text('Género(s): $genreTxt', style: const TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 10),
+          Text(bioTxt),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final artistName = artistCtrl.text.trim();
+
     return Scaffold(
       appBar: AppBar(title: const Text('Discografías')),
       body: Padding(
@@ -171,113 +98,86 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
         child: Column(
           children: [
             TextField(
-              controller: bandCtrl,
-              decoration: InputDecoration(
+              controller: artistCtrl,
+              decoration: const InputDecoration(
                 labelText: 'Banda / Artista',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.search),
-                  onPressed: buscarArtista,
-                ),
+                border: OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 10),
+            ElevatedButton(
+              onPressed: loading ? null : buscar,
+              child: Text(loading ? 'Buscando...' : 'Buscar'),
+            ),
+            const SizedBox(height: 10),
 
-            if (loadingArtists) const LinearProgressIndicator(),
-
-            if (artistResults.isNotEmpty && albums.isEmpty) ...[
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Elige el artista correcto:',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+            if (artistInfo != null && artistName.isNotEmpty) _artistHeader(artistName),
+            if (msg != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(msg!, style: const TextStyle(fontWeight: FontWeight.w700)),
               ),
-              const SizedBox(height: 8),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: artistResults.length,
-                  itemBuilder: (context, i) {
-                    final a = artistResults[i];
-                    final sub = (a.disambiguation?.trim().isNotEmpty ?? false)
-                        ? a.disambiguation!
-                        : 'ID: ${a.id.substring(0, 8)}...';
-                    return Card(
-                      child: ListTile(
-                        title: Text(a.name),
-                        subtitle: Text(sub),
-                        onTap: () => cargarDiscografia(a),
+
+            const SizedBox(height: 10),
+
+            Expanded(
+              child: ListView.builder(
+                itemCount: albums.length,
+                itemBuilder: (context, i) {
+                  final a = albums[i];
+                  final year = a.year ?? '—';
+
+                  return Card(
+                    child: ListTile(
+                      leading: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Image.network(
+                          a.cover250,
+                          width: 56,
+                          height: 56,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const Icon(Icons.album),
+                        ),
                       ),
-                    );
-                  },
-                ),
-              ),
-            ],
-
-            if (loadingAlbums) const LinearProgressIndicator(),
-
-            if (albums.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Álbumes de: $selectedArtistName',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: albums.length,
-                  itemBuilder: (context, i) {
-                    final al = albums[i];
-                    final isOwned = owned.contains(_key(selectedArtistName, al.title));
-
-                    return Card(
-                      child: ListTile(
-                        leading: al.coverUrl == null
-                            ? const Icon(Icons.album)
-                            : ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: Image.network(
-                                  al.coverUrl!,
-                                  width: 48,
-                                  height: 48,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => const Icon(Icons.album),
-                                ),
-                              ),
-                        title: Text(al.title),
-                        subtitle: Text(al.year == null ? 'Año: —' : 'Año: ${al.year}'),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => AlbumTracksScreen(
-                                album: al,
-                                artistName: selectedArtistName, // ✅ aquí va
-                              ),
-                            ),
+                      title: Text(a.title),
+                      subtitle: Text('Año: $year'),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => AlbumTracksScreen(album: a, artistName: artistName),
+                          ),
+                        );
+                      },
+                      trailing: FutureBuilder<bool>(
+                        future: _yaLoTengo(artistName, a.title),
+                        builder: (context, snap2) {
+                          final have = snap2.data ?? false;
+                          if (have) {
+                            return const Text('Ya lo tienes ✅', style: TextStyle(fontWeight: FontWeight.w800));
+                          }
+                          return TextButton(
+                            onPressed: () async {
+                              try {
+                                await VinylDb.instance.insertVinyl(
+                                  artista: artistName,
+                                  album: a.title,
+                                  year: a.year,
+                                  coverPath: null,
+                                  mbid: a.releaseGroupId,
+                                );
+                                if (mounted) setState(() {});
+                              } catch (_) {}
+                            },
+                            child: const Text('Agregar LP'),
                           );
                         },
-                        trailing: isOwned
-                            ? const Text('Ya lo tienes ✅',
-                                style: TextStyle(fontWeight: FontWeight.w700))
-                            : ElevatedButton(
-                                onPressed: () => agregarLpDesdeDiscografia(al),
-                                child: const Text('Agregar LP'),
-                              ),
                       ),
-                    );
-                  },
-                ),
+                    ),
+                  );
+                },
               ),
-            ],
-
-            if (artistResults.isEmpty && albums.isEmpty && !loadingArtists)
-              const Expanded(
-                child: Center(
-                  child: Text('Escribe una banda y busca su discografía.'),
-                ),
-              ),
+            ),
           ],
         ),
       ),
