@@ -1,6 +1,15 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+class ArtistHit {
+  final String id;
+  final String name;
+  final String? country;
+  final int? score;
+
+  ArtistHit({required this.id, required this.name, this.country, this.score});
+}
+
 class AlbumItem {
   final String releaseGroupId;
   final String title;
@@ -62,6 +71,7 @@ class DiscographyService {
   static String _cover500(String rgid) =>
       'https://coverartarchive.org/release-group/$rgid/front-500';
 
+  // --- Wikipedia bio (reseña corta) ---
   static Future<String?> _fetchWikipediaBio(String artistName) async {
     try {
       final searchUrl = Uri.parse(
@@ -93,42 +103,79 @@ class DiscographyService {
     }
   }
 
-  static Future<ArtistInfo> getArtistInfo(String artistName) async {
-    final a = artistName.trim();
-    if (a.isEmpty) return ArtistInfo(country: null, genres: [], bio: null);
+  // ✅ NUEVO: buscar artista(s) (mejor para discografía correcta)
+  static Future<List<ArtistHit>> searchArtists(String name) async {
+    final n = name.trim();
+    if (n.isEmpty) return [];
 
-    final urlSearch = Uri.parse(
-      '$_mbBase/artist/?query=${Uri.encodeQueryComponent('artist:"$a"')}&fmt=json&limit=1',
+    final url = Uri.parse(
+      '$_mbBase/artist/?query=${Uri.encodeQueryComponent('artist:"$n"')}&fmt=json&limit=8',
     );
-    final res = await _getJson(urlSearch);
-    if (res.statusCode != 200) return ArtistInfo(country: null, genres: [], bio: null);
+
+    final res = await _getJson(url);
+    if (res.statusCode != 200) return [];
 
     final data = jsonDecode(res.body) as Map<String, dynamic>;
     final artists = (data['artists'] as List?) ?? [];
-    if (artists.isEmpty) return ArtistInfo(country: null, genres: [], bio: null);
+    final out = <ArtistHit>[];
 
-    final first = artists.first as Map<String, dynamic>;
-    final country = (first['country'] as String?)?.trim();
+    for (final a in artists) {
+      final m = a as Map<String, dynamic>;
+      final id = m['id'] as String?;
+      final name = m['name'] as String?;
+      if (id == null || name == null) continue;
 
-    final tags = (first['tags'] as List?) ?? [];
-    final genres = <String>[];
-    for (final t in tags.take(5)) {
-      final tt = t as Map<String, dynamic>;
-      final name = (tt['name'] as String?)?.trim();
-      if (name != null && name.isNotEmpty) genres.add(name);
+      out.add(ArtistHit(
+        id: id,
+        name: name,
+        country: (m['country'] as String?)?.trim(),
+        score: m['score'] as int?,
+      ));
     }
 
-    final bio = await _fetchWikipediaBio(a);
+    // mejor score primero
+    out.sort((a, b) => (b.score ?? 0).compareTo(a.score ?? 0));
+    return out;
+  }
+
+  // ✅ Info de artista: país + géneros + reseña
+  static Future<ArtistInfo> getArtistInfo(String artistName) async {
+    final hits = await searchArtists(artistName);
+    if (hits.isEmpty) return ArtistInfo(country: null, genres: [], bio: null);
+
+    final best = hits.first;
+
+    // intentamos tags del artista (géneros)
+    final url = Uri.parse('$_mbBase/artist/${best.id}?inc=tags&fmt=json');
+    final res = await _getJson(url);
+
+    String? country = best.country;
+    final genres = <String>[];
+
+    if (res.statusCode == 200) {
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      country = (data['country'] as String?)?.trim() ?? country;
+
+      final tags = (data['tags'] as List?) ?? [];
+      for (final t in tags.take(5)) {
+        final tt = t as Map<String, dynamic>;
+        final name = (tt['name'] as String?)?.trim();
+        if (name != null && name.isNotEmpty) genres.add(name);
+      }
+    }
+
+    final bio = await _fetchWikipediaBio(best.name);
+
     return ArtistInfo(country: country, genres: genres, bio: bio);
   }
 
-  static Future<List<AlbumItem>> getDiscography(String artistName) async {
-    final a = artistName.trim();
-    if (a.isEmpty) return [];
+  // ✅ Discografía precisa por artistId
+  static Future<List<AlbumItem>> getDiscographyByArtistId(String artistId) async {
+    final id = artistId.trim();
+    if (id.isEmpty) return [];
 
-    final q = 'artist:"$a" AND primarytype:album';
     final url = Uri.parse(
-      '$_mbBase/release-group/?query=${Uri.encodeQueryComponent(q)}&fmt=json&limit=40',
+      '$_mbBase/release-group/?artist=$id&fmt=json&limit=100&inc=artist-credits',
     );
 
     final res = await _getJson(url);
@@ -141,22 +188,26 @@ class DiscographyService {
 
     for (final x in rgs) {
       final m = x as Map<String, dynamic>;
-      final id = m['id'] as String?;
+      final primaryType = (m['primary-type'] as String?)?.toLowerCase().trim();
+      if (primaryType != 'album') continue;
+
+      final rgid = m['id'] as String?;
       final title = m['title'] as String?;
-      if (id == null || title == null) continue;
+      if (rgid == null || title == null) continue;
 
       final frd = (m['first-release-date'] as String?) ?? '';
       final year = frd.length >= 4 ? frd.substring(0, 4) : null;
 
       out.add(AlbumItem(
-        releaseGroupId: id,
+        releaseGroupId: rgid,
         title: title,
         year: year,
-        cover250: _cover250(id),
-        cover500: _cover500(id),
+        cover250: _cover250(rgid),
+        cover500: _cover500(rgid),
       ));
     }
 
+    // ordenar por año
     out.sort((a, b) {
       final ay = int.tryParse(a.year ?? '') ?? 9999;
       final by = int.tryParse(b.year ?? '') ?? 9999;
@@ -168,6 +219,7 @@ class DiscographyService {
     return out;
   }
 
+  // Tracklist por releaseGroupId
   static Future<List<TrackItem>> getTracksFromReleaseGroup(String rgid) async {
     final urlRg = Uri.parse('$_mbBase/release-group/$rgid?inc=releases&fmt=json');
     final resRg = await _getJson(urlRg);
