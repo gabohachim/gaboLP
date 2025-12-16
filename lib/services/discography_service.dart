@@ -62,7 +62,6 @@ class DiscographyService {
   static String _cover500(String rgid) =>
       'https://coverartarchive.org/release-group/$rgid/front-500';
 
-  // ---------- Wikipedia bio (reseña corta) ----------
   static Future<String?> _fetchWikipediaBio(String artistName) async {
     try {
       final searchUrl = Uri.parse(
@@ -94,7 +93,6 @@ class DiscographyService {
     }
   }
 
-  /// ✅ país + géneros + bio banda (para lista y discografías)
   static Future<ArtistInfo> getArtistInfo(String artistName) async {
     final a = artistName.trim();
     if (a.isEmpty) return ArtistInfo(country: null, genres: [], bio: null);
@@ -121,11 +119,9 @@ class DiscographyService {
     }
 
     final bio = await _fetchWikipediaBio(a);
-
     return ArtistInfo(country: country, genres: genres, bio: bio);
   }
 
-  /// ✅ DISCOGRAFÍA por NOMBRE (esto te faltaba)
   static Future<List<AlbumItem>> getDiscography(String artistName) async {
     final a = artistName.trim();
     if (a.isEmpty) return [];
@@ -161,7 +157,6 @@ class DiscographyService {
       ));
     }
 
-    // ordenar por año
     out.sort((a, b) {
       final ay = int.tryParse(a.year ?? '') ?? 9999;
       final by = int.tryParse(b.year ?? '') ?? 9999;
@@ -173,7 +168,6 @@ class DiscographyService {
     return out;
   }
 
-  /// ✅ TRACKLIST por releaseGroupId
   static Future<List<TrackItem>> getTracksFromReleaseGroup(String rgid) async {
     final urlRg = Uri.parse('$_mbBase/release-group/$rgid?inc=releases&fmt=json');
     final resRg = await _getJson(urlRg);
