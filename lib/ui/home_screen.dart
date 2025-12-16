@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -26,14 +27,26 @@ class _HomeScreenState extends State<HomeScreen> {
   final albumCtrl = TextEditingController();
   final yearCtrl = TextEditingController();
 
+  // autocomplete artista
+  Timer? _debounceArtist;
+  bool buscandoArtistas = false;
+  List<ArtistHit> sugerenciasArtistas = [];
+  ArtistHit? artistaElegido;
+
+  // autocomplete álbum
+  Timer? _debounceAlbum;
+  bool buscandoAlbums = false;
+  List<AlbumSuggest> sugerenciasAlbums = [];
+  AlbumSuggest? albumElegido;
+
   List<Map<String, dynamic>> resultados = [];
   bool mostrarAgregar = false;
 
   String lastArtist = '';
   String lastAlbum = '';
 
-  String? coverPreviewUrl; // url cover 500
-  String? mbidFound; // releaseGroupId
+  String? coverPreviewUrl;
+  String? mbidFound;
   String? genreFound;
   String? countryFound;
   String? artistBioFound;
@@ -42,6 +55,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _debounceArtist?.cancel();
+    _debounceAlbum?.cancel();
     artistaCtrl.dispose();
     albumCtrl.dispose();
     yearCtrl.dispose();
@@ -53,6 +68,92 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
   }
 
+  // ---------- AUTOCOMPLETE ARTISTA ----------
+  void _onArtistChanged(String v) {
+    _debounceArtist?.cancel();
+    final q = v.trim();
+
+    setState(() {
+      artistaElegido = null;
+      albumElegido = null;
+      sugerenciasAlbums = [];
+      buscandoAlbums = false;
+    });
+
+    if (q.isEmpty) {
+      setState(() {
+        sugerenciasArtistas = [];
+        buscandoArtistas = false;
+      });
+      return;
+    }
+
+    _debounceArtist = Timer(const Duration(milliseconds: 450), () async {
+      setState(() => buscandoArtistas = true);
+      final hits = await DiscographyService.searchArtists(q);
+      if (!mounted) return;
+      setState(() {
+        sugerenciasArtistas = hits;
+        buscandoArtistas = false;
+      });
+    });
+  }
+
+  Future<void> _pickArtist(ArtistHit a) async {
+    FocusScope.of(context).unfocus();
+    setState(() {
+      artistaElegido = a;
+      artistaCtrl.text = a.name;
+      sugerenciasArtistas = [];
+      // limpiar álbum porque cambió artista
+      albumCtrl.clear();
+      albumElegido = null;
+      sugerenciasAlbums = [];
+    });
+  }
+
+  // ---------- AUTOCOMPLETE ÁLBUM ----------
+  void _onAlbumChanged(String v) {
+    _debounceAlbum?.cancel();
+    final q = v.trim();
+    final artistName = artistaCtrl.text.trim();
+
+    setState(() {
+      albumElegido = null;
+    });
+
+    if (artistName.isEmpty || q.isEmpty) {
+      setState(() {
+        sugerenciasAlbums = [];
+        buscandoAlbums = false;
+      });
+      return;
+    }
+
+    _debounceAlbum = Timer(const Duration(milliseconds: 450), () async {
+      setState(() => buscandoAlbums = true);
+      final hits = await MetadataService.searchAlbumsForArtist(
+        artistName: artistName,
+        albumQuery: q,
+      );
+      if (!mounted) return;
+      setState(() {
+        sugerenciasAlbums = hits;
+        buscandoAlbums = false;
+      });
+    });
+  }
+
+  Future<void> _pickAlbum(AlbumSuggest a) async {
+    FocusScope.of(context).unfocus();
+    setState(() {
+      albumElegido = a;
+      albumCtrl.text = a.title;
+      sugerenciasAlbums = [];
+    });
+  }
+
+  // ---------- COVER LOCAL ----------
   Future<String?> _downloadCoverToLocal(String url) async {
     try {
       final res = await http.get(Uri.parse(url));
@@ -74,7 +175,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ✅ Autocompleta año + género + país + reseña + cover
+  // ---------- AUTOCOMPLETAR META ----------
   Future<void> _autoCompletarMeta() async {
     if (lastArtist.trim().isEmpty || lastAlbum.trim().isEmpty) return;
 
@@ -94,15 +195,26 @@ class _HomeScreenState extends State<HomeScreen> {
         album: lastAlbum,
       );
 
-      final aInfo = await DiscographyService.getArtistInfo(lastArtist);
+      // si hay artista elegido, mejor info por ID (más preciso)
+      ArtistInfo aInfo;
+      if (artistaElegido != null) {
+        aInfo = await DiscographyService.getArtistInfoById(artistaElegido!.id, artistName: artistaElegido!.name);
+      } else {
+        aInfo = await DiscographyService.getArtistInfoById(
+          (await DiscographyService.searchArtists(lastArtist)).isNotEmpty
+              ? (await DiscographyService.searchArtists(lastArtist)).first.id
+              : '',
+          artistName: lastArtist,
+        );
+      }
 
       if (!mounted) return;
 
       setState(() {
         if ((meta.year ?? '').isNotEmpty) yearCtrl.text = meta.year!;
         genreFound = (meta.genre ?? '').trim().isEmpty ? null : meta.genre!.trim();
-        mbidFound = meta.releaseGroupId;
-        coverPreviewUrl = meta.cover500;
+        mbidFound = meta.releaseGroupId ?? albumElegido?.releaseGroupId;
+        coverPreviewUrl = meta.cover500 ?? albumElegido?.cover500;
 
         final c = (aInfo.country ?? '').trim();
         countryFound = c.isEmpty ? null : c;
@@ -118,6 +230,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // ---------- BUSCAR EN COLECCIÓN ----------
   Future<void> buscar() async {
     final artista = artistaCtrl.text.trim();
     final album = albumCtrl.text.trim();
@@ -148,8 +261,11 @@ class _HomeScreenState extends State<HomeScreen> {
     // ✅ limpiar barra después de buscar
     artistaCtrl.clear();
     albumCtrl.clear();
+    sugerenciasArtistas = [];
+    sugerenciasAlbums = [];
+    artistaElegido = null;
+    albumElegido = null;
 
-    // ✅ si no existe y hay artista+album -> autocompletar
     if (mostrarAgregar) {
       await _autoCompletarMeta();
     }
@@ -170,7 +286,6 @@ class _HomeScreenState extends State<HomeScreen> {
       localCoverPath = await _downloadCoverToLocal(coverPreviewUrl!.trim());
     }
 
-    // reseña se guarda pero NO se muestra en lista, solo en detalle
     String? bioShort;
     final bio = (artistBioFound ?? '').trim();
     if (bio.isNotEmpty) {
@@ -183,8 +298,8 @@ class _HomeScreenState extends State<HomeScreen> {
         album: album,
         year: year.isEmpty ? null : year,
         genre: genreFound,
-        country: countryFound, // ✅ país guardado
-        artistBio: bioShort, // ✅ reseña guardada (solo detalle)
+        country: countryFound,
+        artistBio: bioShort,
         coverPath: localCoverPath,
         mbid: mbidFound,
       );
@@ -206,6 +321,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // ---------- UI ----------
   Widget gabolpMarca() {
     return const Positioned(
       right: 10,
@@ -301,29 +417,103 @@ class _HomeScreenState extends State<HomeScreen> {
     return const Icon(Icons.album);
   }
 
+  void _showBioFromVinyl(Map<String, dynamic> v) {
+    final bio = (v['artistBio'] as String?)?.trim() ?? '';
+    if (bio.isEmpty) return;
+
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Reseña — ${v['artista']}'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(child: Text(bio)),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
+        ],
+      ),
+    );
+  }
+
   Widget vistaBuscar() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         TextField(
           controller: artistaCtrl,
+          onChanged: _onArtistChanged,
           decoration: InputDecoration(
-            labelText: 'Artista',
+            labelText: 'Artista (autocompletar)',
             filled: true,
             fillColor: Colors.white.withOpacity(0.85),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
           ),
         ),
+        const SizedBox(height: 6),
+        if (buscandoArtistas) const LinearProgressIndicator(),
+        if (sugerenciasArtistas.isNotEmpty)
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.92),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.black12),
+            ),
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: sugerenciasArtistas.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (context, i) {
+                final a = sugerenciasArtistas[i];
+                final c = (a.country ?? '').trim();
+                return ListTile(
+                  dense: true,
+                  title: Text(a.name),
+                  subtitle: Text(c.isEmpty ? '' : 'País: $c'),
+                  onTap: () => _pickArtist(a),
+                );
+              },
+            ),
+          ),
+
         const SizedBox(height: 10),
+
         TextField(
           controller: albumCtrl,
+          onChanged: _onAlbumChanged,
           decoration: InputDecoration(
-            labelText: 'Álbum (opcional para buscar)',
+            labelText: 'Álbum (autocompletar)',
             filled: true,
             fillColor: Colors.white.withOpacity(0.85),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
           ),
         ),
+        const SizedBox(height: 6),
+        if (buscandoAlbums) const LinearProgressIndicator(),
+        if (sugerenciasAlbums.isNotEmpty)
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.92),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.black12),
+            ),
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: sugerenciasAlbums.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (context, i) {
+                final al = sugerenciasAlbums[i];
+                final y = (al.year ?? '').trim();
+                return ListTile(
+                  dense: true,
+                  title: Text(al.title),
+                  subtitle: Text(y.isEmpty ? '' : 'Año: $y'),
+                  onTap: () => _pickAlbum(al),
+                );
+              },
+            ),
+          ),
+
         const SizedBox(height: 10),
         ElevatedButton(onPressed: buscar, child: const Text('Buscar')),
         const SizedBox(height: 12),
@@ -440,7 +630,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ✅ LISTA SIN RESEÑA, SOLO AÑO + GENERO + PAIS
   Widget listaCompleta({required bool conBorrar}) {
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: VinylDb.instance.getAll(),
@@ -466,6 +655,8 @@ class _HomeScreenState extends State<HomeScreen> {
             final genreTxt = genre.isEmpty ? '—' : genre;
             final countryTxt = country.isEmpty ? '—' : country;
 
+            final hasBio = ((v['artistBio'] as String?)?.trim() ?? '').isNotEmpty;
+
             return Card(
               color: Colors.white.withOpacity(0.88),
               child: ListTile(
@@ -486,16 +677,26 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   );
                 },
-                trailing: conBorrar
-                    ? IconButton(
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (hasBio)
+                      IconButton(
+                        tooltip: 'Reseña',
+                        icon: const Icon(Icons.info_outline),
+                        onPressed: () => _showBioFromVinyl(v),
+                      ),
+                    if (conBorrar)
+                      IconButton(
                         icon: const Icon(Icons.delete),
                         onPressed: () async {
                           await VinylDb.instance.deleteById(v['id'] as int);
                           snack('Borrado');
                           setState(() {});
                         },
-                      )
-                    : null,
+                      ),
+                  ],
+                ),
               ),
             );
           },
