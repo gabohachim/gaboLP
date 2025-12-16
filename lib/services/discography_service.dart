@@ -96,46 +96,61 @@ class DiscographyService {
   static String _cover500(String rgid) =>
       'https://coverartarchive.org/release-group/$rgid/front-500';
 
-  static Future<String?> _fetchWikipediaBio(String artistName) async {
-    try {
-      final searchUrl = Uri.parse(
-        'https://en.wikipedia.org/w/api.php?action=opensearch&search=${Uri.encodeQueryComponent(artistName)}&limit=1&namespace=0&format=json',
-      );
-      final sRes = await http.get(searchUrl, headers: {'User-Agent': 'GaBoLP/1.0'});
-      if (sRes.statusCode != 200) return null;
+  // ✅ Wikipedia en español primero; si no, inglés
+  static Future<String?> _fetchWikipediaBioPreferES(String artistName) async {
+    final name = artistName.trim();
+    if (name.isEmpty) return null;
 
-      final j = jsonDecode(sRes.body);
-      if (j is! List || j.length < 2) return null;
+    // intenta ES → luego EN
+    final langs = ['es', 'en'];
 
-      final titles = j[1];
-      if (titles is! List || titles.isEmpty) return null;
+    for (final lang in langs) {
+      try {
+        // 1) Buscar título
+        final searchUrl = Uri.parse(
+          'https://$lang.wikipedia.org/w/api.php?action=opensearch&search=${Uri.encodeQueryComponent(name)}&limit=1&namespace=0&format=json',
+        );
+        final sRes = await http.get(searchUrl, headers: {'User-Agent': 'GaBoLP/1.0'});
+        if (sRes.statusCode != 200) continue;
 
-      final title = (titles.first as String?)?.trim();
-      if (title == null || title.isEmpty) return null;
+        final j = jsonDecode(sRes.body);
+        if (j is! List || j.length < 2) continue;
 
-      final sumUrl = Uri.parse('https://en.wikipedia.org/api/rest_v1/page/summary/$title');
-      final sumRes = await http.get(sumUrl, headers: {'User-Agent': 'GaBoLP/1.0'});
-      if (sumRes.statusCode != 200) return null;
+        final titles = j[1];
+        if (titles is! List || titles.isEmpty) continue;
 
-      final data = jsonDecode(sumRes.body) as Map<String, dynamic>;
-      final extract = (data['extract'] as String?)?.trim();
-      if (extract == null || extract.isEmpty) return null;
+        final title = (titles.first as String?)?.trim();
+        if (title == null || title.isEmpty) continue;
 
-      return extract;
-    } catch (_) {
-      return null;
+        // 2) Summary
+        final sumUrl = Uri.parse('https://$lang.wikipedia.org/api/rest_v1/page/summary/$title');
+        final sumRes = await http.get(sumUrl, headers: {'User-Agent': 'GaBoLP/1.0'});
+        if (sumRes.statusCode != 200) continue;
+
+        final data = jsonDecode(sumRes.body) as Map<String, dynamic>;
+
+        // si no existe, Wikipedia suele devolver "type": "https://mediawiki.org/wiki/HyperSwitch/errors/not_found"
+        final type = (data['type'] as String?) ?? '';
+        if (type.contains('not_found')) continue;
+
+        final extract = (data['extract'] as String?)?.trim();
+        if (extract == null || extract.isEmpty) continue;
+
+        return extract;
+      } catch (_) {
+        // sigue con el siguiente idioma
+        continue;
+      }
     }
+
+    return null;
   }
 
-  /// Autocomplete bandas
   static Future<List<ArtistHit>> searchArtists(String name) async {
     final n = name.trim();
     if (n.isEmpty) return [];
 
-    final url = Uri.parse(
-      '$_mbBase/artist/?query=${Uri.encodeQueryComponent(n)}&fmt=json&limit=12',
-    );
-
+    final url = Uri.parse('$_mbBase/artist/?query=${Uri.encodeQueryComponent(n)}&fmt=json&limit=12');
     final res = await _getJson(url);
     if (res.statusCode != 200) return [];
 
@@ -176,12 +191,13 @@ class DiscographyService {
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       nameForBio ??= (data['name'] as String?)?.trim();
       country = (data['country'] as String?)?.trim();
-
       final tags = (data['tags'] as List?) ?? [];
       genres = _pickGenres(tags);
     }
 
-    final bio = (nameForBio == null || nameForBio!.isEmpty) ? null : await _fetchWikipediaBio(nameForBio!);
+    final bio = (nameForBio == null || nameForBio!.isEmpty)
+        ? null
+        : await _fetchWikipediaBioPreferES(nameForBio!);
 
     return ArtistInfo(country: country, genres: genres, bio: bio);
   }
