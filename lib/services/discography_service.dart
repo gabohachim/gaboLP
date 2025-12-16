@@ -1,40 +1,43 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
-class ArtistHit {
-  final String id;
-  final String name;
-  final String? disambiguation;
-
-  ArtistHit({required this.id, required this.name, this.disambiguation});
-}
-
 class AlbumItem {
-  final String id; // release-group id
+  final String releaseGroupId;
   final String title;
   final String? year;
-  final String? coverUrl;
+  final String cover250;
+  final String cover500;
 
   AlbumItem({
-    required this.id,
+    required this.releaseGroupId,
     required this.title,
+    required this.cover250,
+    required this.cover500,
     this.year,
-    this.coverUrl,
   });
 }
 
 class TrackItem {
   final int number;
   final String title;
-  final String? length; // mm:ss
+  final String? length;
 
   TrackItem({required this.number, required this.title, this.length});
+}
+
+class ArtistInfo {
+  final String? country;
+  final List<String> genres;
+  final String? bio;
+
+  ArtistInfo({this.country, required this.genres, this.bio});
 }
 
 class DiscographyService {
   static const _mbBase = 'https://musicbrainz.org/ws/2';
 
   static DateTime _lastCall = DateTime.fromMillisecondsSinceEpoch(0);
+
   static Future<void> _throttle() async {
     final now = DateTime.now();
     final diff = now.difference(_lastCall);
@@ -49,116 +52,122 @@ class DiscographyService {
         'Accept': 'application/json',
       };
 
-  static Future<http.Response> _get(Uri url) async {
+  static Future<http.Response> _getJson(Uri url) async {
     await _throttle();
     return http.get(url, headers: _headers());
   }
 
-  static Future<List<ArtistHit>> searchArtist(String name) async {
-    final q = 'artist:"${name.trim()}"';
-    final url = Uri.parse('$_mbBase/artist/?query=${Uri.encodeQueryComponent(q)}&fmt=json&limit=10');
+  static Future<String?> _fetchWikipediaBio(String artistName) async {
+    try {
+      // Buscar título
+      final searchUrl = Uri.parse(
+        'https://en.wikipedia.org/w/api.php?action=opensearch&search=${Uri.encodeQueryComponent(artistName)}&limit=1&namespace=0&format=json',
+      );
+      final sRes = await http.get(searchUrl, headers: {'User-Agent': 'GaBoLP/1.0'});
+      if (sRes.statusCode != 200) return null;
 
-    final res = await _get(url);
-    if (res.statusCode != 200) return [];
+      final j = jsonDecode(sRes.body);
+      if (j is! List || j.length < 2) return null;
+
+      final titles = j[1];
+      if (titles is! List || titles.isEmpty) return null;
+
+      final title = (titles.first as String?)?.trim();
+      if (title == null || title.isEmpty) return null;
+
+      // Summary
+      final sumUrl = Uri.parse('https://en.wikipedia.org/api/rest_v1/page/summary/$title');
+      final sumRes = await http.get(sumUrl, headers: {'User-Agent': 'GaBoLP/1.0'});
+      if (sumRes.statusCode != 200) return null;
+
+      final data = jsonDecode(sumRes.body) as Map<String, dynamic>;
+      final extract = (data['extract'] as String?)?.trim();
+      if (extract == null || extract.isEmpty) return null;
+
+      return extract;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// ✅ Lo que te falta: país + géneros + bio banda
+  static Future<ArtistInfo> getArtistInfo(String artistName) async {
+    final a = artistName.trim();
+    if (a.isEmpty) return ArtistInfo(country: null, genres: [], bio: null);
+
+    final urlSearch = Uri.parse(
+      '$_mbBase/artist/?query=${Uri.encodeQueryComponent('artist:"$a"')}&fmt=json&limit=1',
+    );
+    final res = await _getJson(urlSearch);
+    if (res.statusCode != 200) return ArtistInfo(country: null, genres: [], bio: null);
 
     final data = jsonDecode(res.body) as Map<String, dynamic>;
     final artists = (data['artists'] as List?) ?? [];
+    if (artists.isEmpty) return ArtistInfo(country: null, genres: [], bio: null);
 
-    return artists.map((a) {
-      final m = a as Map<String, dynamic>;
-      return ArtistHit(
-        id: (m['id'] as String),
-        name: (m['name'] as String),
-        disambiguation: (m['disambiguation'] as String?),
-      );
-    }).toList();
-  }
+    final first = artists.first as Map<String, dynamic>;
+    final country = (first['country'] as String?)?.trim();
 
-  /// Discografía de álbumes ordenada por AÑO (sin año al final)
-  static Future<List<AlbumItem>> getDiscographyAlbums(String artistId) async {
-    final url = Uri.parse(
-      '$_mbBase/release-group?artist=$artistId&fmt=json&limit=100&type=album',
-    );
-
-    final res = await _get(url);
-    if (res.statusCode != 200) return [];
-
-    final data = jsonDecode(res.body) as Map<String, dynamic>;
-    final rgs = (data['release-groups'] as List?) ?? [];
-
-    final items = <AlbumItem>[];
-    for (final it in rgs) {
-      final m = it as Map<String, dynamic>;
-      final id = m['id'] as String;
-      final title = (m['title'] as String?) ?? 'Álbum';
-      final firstDate = (m['first-release-date'] as String?) ?? '';
-      final year = firstDate.length >= 4 ? firstDate.substring(0, 4) : null;
-
-      // Cover
-      final coverUrl = 'https://coverartarchive.org/release-group/$id/front-250';
-
-      items.add(AlbumItem(id: id, title: title, year: year, coverUrl: coverUrl));
+    // tags del artista (géneros)
+    final tags = (first['tags'] as List?) ?? [];
+    final genres = <String>[];
+    for (final t in tags.take(5)) {
+      final tt = t as Map<String, dynamic>;
+      final name = (tt['name'] as String?)?.trim();
+      if (name != null && name.isNotEmpty) genres.add(name);
     }
 
-    // ✅ Orden por año (sin año => al final), y si empatan, por título
-    items.sort((a, b) {
-      final ay = int.tryParse(a.year ?? '');
-      final by = int.tryParse(b.year ?? '');
+    final bio = await _fetchWikipediaBio(a);
 
-      if (ay == null && by == null) {
-        return a.title.toLowerCase().compareTo(b.title.toLowerCase());
-      }
-      if (ay == null) return 1;  // a al final
-      if (by == null) return -1; // b al final
-
-      final c = ay.compareTo(by);
-      if (c != 0) return c;
-      return a.title.toLowerCase().compareTo(b.title.toLowerCase());
-    });
-
-    return items;
+    return ArtistInfo(country: country, genres: genres, bio: bio);
   }
 
-  static Future<List<TrackItem>> getTracksFromReleaseGroup(String releaseGroupId) async {
-    final url1 = Uri.parse('$_mbBase/release?release-group=$releaseGroupId&fmt=json&limit=1');
-    final res1 = await _get(url1);
-    if (res1.statusCode != 200) return [];
+  // --- lo de tracks (si lo usas en otra pantalla) ---
+  static Future<List<TrackItem>> getTracksFromReleaseGroup(String rgid) async {
+    final urlRg = Uri.parse('$_mbBase/release-group/$rgid?inc=releases&fmt=json');
+    final resRg = await _getJson(urlRg);
+    if (resRg.statusCode != 200) return [];
 
-    final data1 = jsonDecode(res1.body) as Map<String, dynamic>;
-    final releases = (data1['releases'] as List?) ?? [];
+    final dataRg = jsonDecode(resRg.body) as Map<String, dynamic>;
+    final releases = (dataRg['releases'] as List?) ?? [];
     if (releases.isEmpty) return [];
 
-    final releaseId = (releases.first as Map<String, dynamic>)['id'] as String;
+    final firstReleaseId = (releases.first as Map<String, dynamic>)['id'] as String?;
+    if (firstReleaseId == null) return [];
 
-    final url2 = Uri.parse('$_mbBase/release/$releaseId?fmt=json&inc=recordings');
-    final res2 = await _get(url2);
-    if (res2.statusCode != 200) return [];
+    final urlRel = Uri.parse('$_mbBase/release/$firstReleaseId?inc=recordings&fmt=json');
+    final resRel = await _getJson(urlRel);
+    if (resRel.statusCode != 200) return [];
 
-    final data2 = jsonDecode(res2.body) as Map<String, dynamic>;
-    final media = (data2['media'] as List?) ?? [];
+    final dataRel = jsonDecode(resRel.body) as Map<String, dynamic>;
+    final media = (dataRel['media'] as List?) ?? [];
     if (media.isEmpty) return [];
 
-    final tracks = ((media.first as Map<String, dynamic>)['tracks'] as List?) ?? [];
-    final out = <TrackItem>[];
-
+    final tracksOut = <TrackItem>[];
     int n = 1;
-    for (final t in tracks) {
-      final tm = t as Map<String, dynamic>;
-      final title = (tm['title'] as String?) ?? 'Track';
 
-      final lenMs = tm['length'] as int?;
-      String? len;
-      if (lenMs != null) {
-        final totalSec = (lenMs / 1000).round();
-        final min = totalSec ~/ 60;
-        final sec = totalSec % 60;
-        len = '${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
+    for (final m in media) {
+      final mm = m as Map<String, dynamic>;
+      final tracks = (mm['tracks'] as List?) ?? [];
+      for (final t in tracks) {
+        final tt = t as Map<String, dynamic>;
+        final title = (tt['title'] as String?) ?? 'Track';
+        final lenMs = tt['length'] as int?;
+        tracksOut.add(TrackItem(
+          number: n++,
+          title: title,
+          length: (lenMs == null) ? null : _fmtMs(lenMs),
+        ));
       }
-
-      out.add(TrackItem(number: n, title: title, length: len));
-      n++;
     }
 
-    return out;
+    return tracksOut;
+  }
+
+  static String _fmtMs(int ms) {
+    final totalSec = (ms / 1000).round();
+    final m = totalSec ~/ 60;
+    final s = totalSec % 60;
+    return '${m}:${s.toString().padLeft(2, '0')}';
   }
 }
