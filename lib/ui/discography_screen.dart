@@ -38,7 +38,7 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
     });
 
     final info = await DiscographyService.getArtistInfo(name);
-    final list = await DiscographyService.getDiscography(name); // ✅ por nombre del artista
+    final list = await DiscographyService.getDiscography(name);
 
     if (!mounted) return;
 
@@ -110,16 +110,13 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
               child: Text(loading ? 'Buscando...' : 'Buscar'),
             ),
             const SizedBox(height: 10),
-
             if (artistInfo != null && artistName.isNotEmpty) _artistHeader(artistName),
             if (msg != null)
               Padding(
                 padding: const EdgeInsets.only(top: 10),
                 child: Text(msg!, style: const TextStyle(fontWeight: FontWeight.w700)),
               ),
-
             const SizedBox(height: 10),
-
             Expanded(
               child: ListView.builder(
                 itemCount: albums.length,
