@@ -85,14 +85,12 @@ class _AlbumTracksScreenState extends State<AlbumTracksScreen> {
               ],
             ),
             const SizedBox(height: 12),
-
             if (loading) const LinearProgressIndicator(),
             if (!loading && msg != null)
               Padding(
                 padding: const EdgeInsets.all(10),
                 child: Text(msg!),
               ),
-
             if (!loading && tracks.isNotEmpty)
               Expanded(
                 child: ListView.separated(
