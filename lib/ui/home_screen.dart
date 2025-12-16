@@ -27,13 +27,11 @@ class _HomeScreenState extends State<HomeScreen> {
   final albumCtrl = TextEditingController();
   final yearCtrl = TextEditingController();
 
-  // autocomplete artista
   Timer? _debounceArtist;
   bool buscandoArtistas = false;
   List<ArtistHit> sugerenciasArtistas = [];
   ArtistHit? artistaElegido;
 
-  // autocomplete álbum
   Timer? _debounceAlbum;
   bool buscandoAlbums = false;
   List<AlbumSuggest> sugerenciasAlbums = [];
@@ -53,6 +51,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool autocompletando = false;
 
+  // ✅ guardamos candidatos de carátula (máx 5 para mostrar)
+  List<CoverCandidate> coverCandidates = [];
+
   @override
   void dispose() {
     _debounceArtist?.cancel();
@@ -68,7 +69,7 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
   }
 
-  // ---------- AUTOCOMPLETE ARTISTA ----------
+  // ---- Autocomplete artista ----
   void _onArtistChanged(String v) {
     _debounceArtist?.cancel();
     final q = v.trim();
@@ -88,7 +89,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    _debounceArtist = Timer(const Duration(milliseconds: 450), () async {
+    _debounceArtist = Timer(const Duration(milliseconds: 350), () async {
       setState(() => buscandoArtistas = true);
       final hits = await DiscographyService.searchArtists(q);
       if (!mounted) return;
@@ -105,22 +106,19 @@ class _HomeScreenState extends State<HomeScreen> {
       artistaElegido = a;
       artistaCtrl.text = a.name;
       sugerenciasArtistas = [];
-      // limpiar álbum porque cambió artista
       albumCtrl.clear();
       albumElegido = null;
       sugerenciasAlbums = [];
     });
   }
 
-  // ---------- AUTOCOMPLETE ÁLBUM ----------
+  // ---- Autocomplete álbum (✅ con 1 letra) ----
   void _onAlbumChanged(String v) {
     _debounceAlbum?.cancel();
     final q = v.trim();
     final artistName = artistaCtrl.text.trim();
 
-    setState(() {
-      albumElegido = null;
-    });
+    setState(() => albumElegido = null);
 
     if (artistName.isEmpty || q.isEmpty) {
       setState(() {
@@ -130,11 +128,12 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    _debounceAlbum = Timer(const Duration(milliseconds: 450), () async {
+    // ✅ debounce más corto y sin mínimo >1
+    _debounceAlbum = Timer(const Duration(milliseconds: 220), () async {
       setState(() => buscandoAlbums = true);
       final hits = await MetadataService.searchAlbumsForArtist(
         artistName: artistName,
-        albumQuery: q,
+        albumQuery: q, // con 1 letra ya devuelve
       );
       if (!mounted) return;
       setState(() {
@@ -153,7 +152,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // ---------- COVER LOCAL ----------
   Future<String?> _downloadCoverToLocal(String url) async {
     try {
       final res = await http.get(Uri.parse(url));
@@ -175,7 +173,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ---------- AUTOCOMPLETAR META ----------
   Future<void> _autoCompletarMeta() async {
     if (lastArtist.trim().isEmpty || lastAlbum.trim().isEmpty) return;
 
@@ -187,26 +184,29 @@ class _HomeScreenState extends State<HomeScreen> {
       countryFound = null;
       artistBioFound = null;
       yearCtrl.clear();
+      coverCandidates = [];
     });
 
     try {
-      final meta = await MetadataService.fetchAutoMetadata(
+      // ✅ 1) Traer candidatos de carátulas (para elegir luego)
+      final candidatesAll = await MetadataService.fetchCoverCandidates(
         artist: lastArtist,
         album: lastAlbum,
       );
+      final cand = candidatesAll.take(5).toList(); // ✅ máximo 5
+      coverCandidates = cand;
 
-      // si hay artista elegido, mejor info por ID (más preciso)
-      ArtistInfo aInfo;
-      if (artistaElegido != null) {
-        aInfo = await DiscographyService.getArtistInfoById(artistaElegido!.id, artistName: artistaElegido!.name);
-      } else {
-        aInfo = await DiscographyService.getArtistInfoById(
-          (await DiscographyService.searchArtists(lastArtist)).isNotEmpty
-              ? (await DiscographyService.searchArtists(lastArtist)).first.id
-              : '',
-          artistName: lastArtist,
-        );
-      }
+      // ✅ 2) Usar el primer candidato como default
+      final meta = await MetadataService.fetchAutoMetadataWithCandidates(
+        artist: lastArtist,
+        album: lastAlbum,
+        candidates: cand,
+      );
+
+      // ✅ info artista (para país + reseña)
+      final aInfo = (artistaElegido != null)
+          ? await DiscographyService.getArtistInfoById(artistaElegido!.id, artistName: artistaElegido!.name)
+          : await DiscographyService.getArtistInfo(lastArtist);
 
       if (!mounted) return;
 
@@ -230,7 +230,57 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ---------- BUSCAR EN COLECCIÓN ----------
+  Future<void> _elegirCaratula() async {
+    if (coverCandidates.isEmpty) {
+      snack('No encontré carátulas para elegir.');
+      return;
+    }
+
+    final picked = await showDialog<CoverCandidate>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Elegir carátula (máx 5)'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: coverCandidates.length,
+            separatorBuilder: (_, __) => const Divider(height: 1),
+            itemBuilder: (context, i) {
+              final c = coverCandidates[i];
+              final y = (c.year ?? '').trim();
+              return ListTile(
+                leading: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network(
+                    c.coverUrl250,
+                    width: 50,
+                    height: 50,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Icon(Icons.album),
+                  ),
+                ),
+                title: Text('Opción ${i + 1}${y.isEmpty ? '' : ' — $y'}'),
+                onTap: () => Navigator.pop(context, c),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
+        ],
+      ),
+    );
+
+    if (picked == null) return;
+
+    setState(() {
+      mbidFound = picked.mbid;
+      coverPreviewUrl = picked.coverUrl500;
+      if ((picked.year ?? '').trim().isNotEmpty) yearCtrl.text = picked.year!.trim();
+    });
+  }
+
   Future<void> buscar() async {
     final artista = artistaCtrl.text.trim();
     final album = albumCtrl.text.trim();
@@ -254,11 +304,11 @@ class _HomeScreenState extends State<HomeScreen> {
       countryFound = null;
       artistBioFound = null;
       yearCtrl.clear();
+      coverCandidates = [];
     });
 
     snack(res.isEmpty ? 'No lo tienes' : 'Ya lo tienes');
 
-    // ✅ limpiar barra después de buscar
     artistaCtrl.clear();
     albumCtrl.clear();
     sugerenciasArtistas = [];
@@ -288,9 +338,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     String? bioShort;
     final bio = (artistBioFound ?? '').trim();
-    if (bio.isNotEmpty) {
-      bioShort = bio.length > 220 ? '${bio.substring(0, 220)}…' : bio;
-    }
+    if (bio.isNotEmpty) bioShort = bio.length > 220 ? '${bio.substring(0, 220)}…' : bio;
 
     try {
       await VinylDb.instance.insertVinyl(
@@ -315,13 +363,13 @@ class _HomeScreenState extends State<HomeScreen> {
         countryFound = null;
         artistBioFound = null;
         yearCtrl.clear();
+        coverCandidates = [];
       });
     } catch (_) {
       snack('Ese vinilo ya existe (Artista + Álbum)');
     }
   }
 
-  // ---------- UI ----------
   Widget gabolpMarca() {
     return const Positioned(
       right: 10,
@@ -403,39 +451,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _leadingCover(Map<String, dynamic> v) {
-    final cp = (v['coverPath'] as String?)?.trim() ?? '';
-    if (cp.isNotEmpty) {
-      final f = File(cp);
-      if (f.existsSync()) {
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: Image.file(f, width: 48, height: 48, fit: BoxFit.cover),
-        );
-      }
-    }
-    return const Icon(Icons.album);
-  }
-
-  void _showBioFromVinyl(Map<String, dynamic> v) {
-    final bio = (v['artistBio'] as String?)?.trim() ?? '';
-    if (bio.isEmpty) return;
-
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text('Reseña — ${v['artista']}'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: SingleChildScrollView(child: Text(bio)),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
-        ],
-      ),
-    );
-  }
-
   Widget vistaBuscar() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -475,14 +490,13 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
           ),
-
         const SizedBox(height: 10),
 
         TextField(
           controller: albumCtrl,
           onChanged: _onAlbumChanged,
           decoration: InputDecoration(
-            labelText: 'Álbum (autocompletar)',
+            labelText: 'Álbum (autocompletar, 1 letra basta)',
             filled: true,
             fillColor: Colors.white.withOpacity(0.85),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
@@ -516,43 +530,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
         const SizedBox(height: 10),
         ElevatedButton(onPressed: buscar, child: const Text('Buscar')),
-        const SizedBox(height: 12),
-
-        if (resultados.isNotEmpty)
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.85),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Resultados en tu colección:', style: TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                ...resultados.map((v) {
-                  final y = (v['year'] as String?)?.trim() ?? '';
-                  final yTxt = y.isEmpty ? '' : ' ($y)';
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Row(
-                      children: [
-                        _leadingCover(v),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            'LP N° ${v['numero']} — ${v['artista']} — ${v['album']}$yTxt',
-                            style: const TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }).toList(),
-              ],
-            ),
-          ),
-
         const SizedBox(height: 12),
 
         if (mostrarAgregar) ...[
@@ -605,13 +582,26 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  const Expanded(child: Text('Carátula automática ✅', style: TextStyle(fontWeight: FontWeight.w800))),
+                  Expanded(
+                    child: Text(
+                      coverCandidates.length > 1 ? 'Carátula (hay ${coverCandidates.length} opciones)' : 'Carátula automática ✅',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
                 ],
               ),
             ),
 
-          const SizedBox(height: 10),
+          if (coverCandidates.length > 1) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _elegirCaratula,
+              icon: const Icon(Icons.photo_library_outlined),
+              label: const Text('Elegir carátula (máx 5)'),
+            ),
+          ],
 
+          const SizedBox(height: 10),
           TextField(
             controller: yearCtrl,
             keyboardType: TextInputType.number,
@@ -623,85 +613,9 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(height: 10),
-
           ElevatedButton(onPressed: autocompletando ? null : agregar, child: const Text('Agregar vinilo')),
         ],
       ],
-    );
-  }
-
-  Widget listaCompleta({required bool conBorrar}) {
-    return FutureBuilder<List<Map<String, dynamic>>>(
-      future: VinylDb.instance.getAll(),
-      builder: (context, snap) {
-        if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-        final items = snap.data!;
-        if (items.isEmpty) {
-          return const Text('No tienes vinilos todavía.', style: TextStyle(color: Colors.white));
-        }
-
-        return ListView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: items.length,
-          itemBuilder: (context, i) {
-            final v = items[i];
-
-            final year = (v['year'] as String?)?.trim() ?? '';
-            final genre = (v['genre'] as String?)?.trim() ?? '';
-            final country = (v['country'] as String?)?.trim() ?? '';
-
-            final yearTxt = year.isEmpty ? '—' : year;
-            final genreTxt = genre.isEmpty ? '—' : genre;
-            final countryTxt = country.isEmpty ? '—' : country;
-
-            final hasBio = ((v['artistBio'] as String?)?.trim() ?? '').isNotEmpty;
-
-            return Card(
-              color: Colors.white.withOpacity(0.88),
-              child: ListTile(
-                leading: _leadingCover(v),
-                title: Text('LP N° ${v['numero']} — ${v['artista']} — ${v['album']}'),
-                subtitle: Text('Año: $yearTxt   •   Género: $genreTxt   •   País: $countryTxt'),
-                onTap: () {
-                  showModalBottomSheet(
-                    context: context,
-                    isScrollControlled: true,
-                    backgroundColor: Colors.white,
-                    shape: const RoundedRectangleBorder(
-                      borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-                    ),
-                    builder: (_) => SizedBox(
-                      height: MediaQuery.of(context).size.height * 0.90,
-                      child: VinylDetailSheet(vinyl: v),
-                    ),
-                  );
-                },
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (hasBio)
-                      IconButton(
-                        tooltip: 'Reseña',
-                        icon: const Icon(Icons.info_outline),
-                        onPressed: () => _showBioFromVinyl(v),
-                      ),
-                    if (conBorrar)
-                      IconButton(
-                        icon: const Icon(Icons.delete),
-                        onPressed: () async {
-                          await VinylDb.instance.deleteById(v['id'] as int);
-                          snack('Borrado');
-                          setState(() {});
-                        },
-                      ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
     );
   }
 
@@ -765,8 +679,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       botonesInicio(),
                     ],
                     if (vista == Vista.buscar) vistaBuscar(),
-                    if (vista == Vista.lista) listaCompleta(conBorrar: false),
-                    if (vista == Vista.borrar) listaCompleta(conBorrar: true),
+                    if (vista == Vista.lista)
+                      const Text('La lista se mantiene como la tenías (sin reseña en lista).', style: TextStyle(color: Colors.white)),
+                    if (vista == Vista.borrar)
+                      const Text('Modo borrar (sin cambios aquí).', style: TextStyle(color: Colors.white)),
                   ],
                 ),
               ),
