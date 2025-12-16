@@ -32,8 +32,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String lastArtist = '';
   String lastAlbum = '';
 
-  String? coverPreviewUrl; // url cover 500
-  String? mbidFound; // releaseGroupId
+  String? coverPreviewUrl;
+  String? mbidFound;
   String? genreFound;
   String? artistBioFound;
 
@@ -73,7 +73,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ✅ NUEVO: autocompletar año + carátula + género + bio banda
   Future<void> _autoCompletarMeta() async {
     if (lastArtist.trim().isEmpty || lastAlbum.trim().isEmpty) return;
 
@@ -87,23 +86,24 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
-      // 1) Año + género + releaseGroupId + cover
       final meta = await MetadataService.fetchAutoMetadata(
         artist: lastArtist,
         album: lastAlbum,
       );
 
-      // 2) Bio corta del artista (Wikipedia via DiscographyService)
       final aInfo = await DiscographyService.getArtistInfo(lastArtist);
 
       if (!mounted) return;
 
       setState(() {
         if ((meta.year ?? '').isNotEmpty) yearCtrl.text = meta.year!;
-        genreFound = (meta.genre ?? '').isEmpty ? null : meta.genre;
+        genreFound = (meta.genre ?? '').trim().isEmpty ? null : meta.genre!.trim();
         mbidFound = meta.releaseGroupId;
-        coverPreviewUrl = meta.cover500; // puede ser null si no hay
-        artistBioFound = (aInfo.bio ?? '').trim().isEmpty ? null : aInfo.bio!.trim();
+        coverPreviewUrl = meta.cover500;
+
+        final bio = (aInfo.bio ?? '').trim();
+        artistBioFound = bio.isEmpty ? null : bio;
+
         autocompletando = false;
       });
     } catch (_) {
@@ -138,11 +138,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
     snack(res.isEmpty ? 'No lo tienes' : 'Ya lo tienes');
 
-    // ✅ limpiar barra después de buscar
+    // limpiar barra
     artistaCtrl.clear();
     albumCtrl.clear();
 
-    // ✅ si no existe y es artista+album -> autocompletar
     if (mostrarAgregar) {
       await _autoCompletarMeta();
     }
@@ -164,9 +163,9 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     String? bioShort;
-    if (artistBioFound != null && artistBioFound!.isNotEmpty) {
-      bioShort = artistBioFound!;
-      if (bioShort.length > 180) bioShort = '${bioShort.substring(0, 180)}…';
+    final bio = (artistBioFound ?? '').trim();
+    if (bio.isNotEmpty) {
+      bioShort = bio.length > 180 ? '${bio.substring(0, 180)}…' : bio;
     }
 
     try {
@@ -201,8 +200,10 @@ class _HomeScreenState extends State<HomeScreen> {
       right: 10,
       bottom: 8,
       child: IgnorePointer(
-        child: Text('GaBoLP',
-            style: TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.w700)),
+        child: Text(
+          'GaBoLP',
+          style: TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.w700),
+        ),
       ),
     );
   }
@@ -226,7 +227,8 @@ class _HomeScreenState extends State<HomeScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const Text('LP', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
-                Text('$total', style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+                Text('$total',
+                    style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
               ],
             ),
           ),
@@ -314,7 +316,6 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(height: 10),
         ElevatedButton(onPressed: buscar, child: const Text('Buscar')),
         const SizedBox(height: 12),
-
         if (resultados.isNotEmpty)
           Container(
             padding: const EdgeInsets.all(12),
@@ -349,9 +350,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
-
         const SizedBox(height: 12),
-
         if (mostrarAgregar) ...[
           Container(
             padding: const EdgeInsets.all(12),
@@ -362,7 +361,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Agregar este vinilo:', style: const TextStyle(fontWeight: FontWeight.w900)),
+                const Text('Agregar este vinilo:', style: TextStyle(fontWeight: FontWeight.w900)),
                 const SizedBox(height: 6),
                 Text('Artista: $lastArtist', style: const TextStyle(fontWeight: FontWeight.w700)),
                 Text('Álbum: $lastAlbum', style: const TextStyle(fontWeight: FontWeight.w700)),
@@ -376,7 +375,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(height: 10),
-
           if (coverPreviewUrl != null && coverPreviewUrl!.trim().isNotEmpty)
             Container(
               padding: const EdgeInsets.all(10),
@@ -405,10 +403,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-
           const SizedBox(height: 10),
-
-          // si quieres permitir editar año manualmente, lo dejamos:
           TextField(
             controller: yearCtrl,
             keyboardType: TextInputType.number,
@@ -420,7 +415,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(height: 10),
-
           ElevatedButton(onPressed: autocompletando ? null : agregar, child: const Text('Agregar vinilo')),
         ],
       ],
@@ -454,9 +448,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 leading: _leadingCover(v),
                 title: Text('LP N° ${v['numero']} — ${v['artista']} — ${v['album']}$yearTxt'),
                 subtitle: Text(
-                  (bio.isNotEmpty)
-                      ? bio
-                      : (genre.isNotEmpty ? 'Género: $genre' : ''),
+                  bio.isNotEmpty ? bio : (genre.isNotEmpty ? 'Género: $genre' : ''),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
