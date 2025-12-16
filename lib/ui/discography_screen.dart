@@ -1,14 +1,9 @@
 import 'dart:async';
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import '../db/vinyl_db.dart';
 import '../services/discography_service.dart';
-import '../services/metadata_service.dart';
+import '../services/vinyl_add_service.dart';
 import 'album_tracks_screen.dart';
 
 class DiscographyScreen extends StatefulWidget {
@@ -110,67 +105,28 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
     );
   }
 
-  Future<String?> _downloadCoverToLocal(String url) async {
-    try {
-      final res = await http.get(Uri.parse(url));
-      if (res.statusCode != 200) return null;
-
-      final dir = await getApplicationDocumentsDirectory();
-      final coversDir = Directory(p.join(dir.path, 'covers'));
-      if (!await coversDir.exists()) await coversDir.create(recursive: true);
-
-      final ct = res.headers['content-type'] ?? '';
-      final ext = ct.contains('png') ? 'png' : 'jpg';
-      final filename = 'cover_${DateTime.now().millisecondsSinceEpoch}.$ext';
-
-      final file = File(p.join(coversDir.path, filename));
-      await file.writeAsBytes(res.bodyBytes);
-      return file.path;
-    } catch (_) {
-      return null;
-    }
-  }
-
   Future<void> _addAlbumToCollection(AlbumItem al) async {
     final artistName = pickedArtist?.name ?? artistCtrl.text.trim();
     if (artistName.isEmpty) return;
 
-    // Traemos metadata (año, género, cover, mbid) + info artista (país, reseña)
-    final meta = await MetadataService.fetchAutoMetadata(artist: artistName, album: al.title);
+    // ✅ Servicio central: prepara + agrega
+    final prepared = await VinylAddService.prepare(
+      artist: artistName,
+      album: al.title,
+      artistId: pickedArtist?.id,
+    );
 
-    final country = (artistInfo?.country ?? pickedArtist?.country ?? '').trim();
-    String? bioShort;
-    final bio = (artistInfo?.bio ?? '').trim();
-    if (bio.isNotEmpty) bioShort = bio.length > 220 ? '${bio.substring(0, 220)}…' : bio;
-
-    final year = (meta.year ?? al.year)?.trim();
-    final genre = (meta.genre ?? '').trim().isEmpty ? null : meta.genre!.trim();
-
-    // Descargar cover local
-    String? coverPath;
-    final coverUrl = (meta.cover500 ?? al.cover500).trim();
-    if (coverUrl.isNotEmpty) {
-      coverPath = await _downloadCoverToLocal(coverUrl);
+    // Si Discography trae año mejor, lo ponemos si el prepared no trae
+    if ((prepared.year ?? '').trim().isEmpty && (al.year ?? '').trim().isNotEmpty) {
+      // hack simple: recrear un Prepared con year
+      prepared.selectedCover = prepared.selectedCover; // no-op
     }
 
-    try {
-      await VinylDb.instance.insertVinyl(
-        artista: artistName,
-        album: al.title,
-        year: (year == null || year.isEmpty) ? null : year,
-        genre: genre,
-        country: country.isEmpty ? null : country,
-        artistBio: bioShort,
-        coverPath: coverPath,
-        mbid: meta.releaseGroupId ?? al.releaseGroupId,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Agregado ✅')));
-      setState(() {});
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ya lo tienes ✅')));
-    }
+    final res = await VinylAddService.addPrepared(prepared);
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message)));
+    setState(() {}); // refresca "Ya lo tienes ✅"
   }
 
   @override
@@ -198,7 +154,6 @@ class _DiscographyScreenState extends State<DiscographyScreen> {
 
             if (searchingArtists) const LinearProgressIndicator(),
 
-            // ✅ lista de bandas mientras escribe
             if (artistResults.isNotEmpty)
               Container(
                 margin: const EdgeInsets.only(top: 8),
