@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class CoverCandidate {
-  final String releaseGroupId; // ID del álbum (release-group)
+  final String releaseGroupId;
   final String? year;
   final String coverUrl250;
   final String coverUrl500;
@@ -14,8 +14,24 @@ class CoverCandidate {
     this.year,
   });
 
-  // ✅ Compatibilidad (por si algún archivo antiguo usa .mbid)
+  // compatibilidad por si algo usa .mbid
   String get mbid => releaseGroupId;
+}
+
+class AlbumAutoMeta {
+  final String? year;
+  final String? genre;
+  final String? releaseGroupId;
+  final String? cover250;
+  final String? cover500;
+
+  AlbumAutoMeta({
+    this.year,
+    this.genre,
+    this.releaseGroupId,
+    this.cover250,
+    this.cover500,
+  });
 }
 
 class MetadataService {
@@ -42,7 +58,6 @@ class MetadataService {
     return http.get(url, headers: _headers());
   }
 
-  /// ✅ Devuelve opciones de carátulas usando RELEASE-GROUP (más confiable)
   static Future<List<CoverCandidate>> fetchCoverCandidates({
     required String artist,
     required String album,
@@ -51,7 +66,6 @@ class MetadataService {
     final al = album.trim();
     if (a.isEmpty || al.isEmpty) return [];
 
-    // Buscar releases y sacar release-group (álbum real)
     final q = 'release:"$al" AND artist:"$a"';
     final url = Uri.parse(
       '$_mbBase/release/?query=${Uri.encodeQueryComponent(q)}&fmt=json&limit=20',
@@ -80,7 +94,6 @@ class MetadataService {
       if (seen.contains(rgid)) continue;
       seen.add(rgid);
 
-      // Cover Art Archive por release-group
       final u250 = 'https://coverartarchive.org/release-group/$rgid/front-250';
       final u500 = 'https://coverartarchive.org/release-group/$rgid/front-500';
 
@@ -95,5 +108,53 @@ class MetadataService {
     }
 
     return out;
+  }
+
+  /// ✅ Devuelve año + género + cover + releaseGroupId (lo usa HomeScreen)
+  static Future<AlbumAutoMeta> fetchAutoMetadata({
+    required String artist,
+    required String album,
+  }) async {
+    String? rgid;
+    String? year;
+    String? genre;
+
+    // 1) Conseguir releaseGroupId y año desde releases
+    final options = await fetchCoverCandidates(artist: artist, album: album);
+    if (options.isNotEmpty) {
+      rgid = options.first.releaseGroupId;
+      year = options.first.year;
+    }
+
+    // 2) Género: tags del release-group (si hay)
+    if (rgid != null && rgid.isNotEmpty) {
+      final urlRg = Uri.parse('$_mbBase/release-group/$rgid?inc=tags&fmt=json');
+      final resRg = await _getJson(urlRg);
+
+      if (resRg.statusCode == 200) {
+        final dataRg = jsonDecode(resRg.body) as Map<String, dynamic>;
+
+        // año más fiable: first-release-date
+        final frd = (dataRg['first-release-date'] as String?) ?? '';
+        if ((year == null || year.isEmpty) && frd.length >= 4) {
+          year = frd.substring(0, 4);
+        }
+
+        final tags = (dataRg['tags'] as List?) ?? [];
+        if (tags.isNotEmpty) {
+          final t0 = tags.first as Map<String, dynamic>;
+          final g = (t0['name'] as String?)?.trim();
+          if (g != null && g.isNotEmpty) genre = g;
+        }
+      }
+    }
+
+    return AlbumAutoMeta(
+      year: year,
+      genre: genre,
+      releaseGroupId: rgid,
+      cover250: (rgid == null) ? null : 'https://coverartarchive.org/release-group/$rgid/front-250',
+      cover500: (rgid == null) ? null : 'https://coverartarchive.org/release-group/$rgid/front-500',
+    );
   }
 }
