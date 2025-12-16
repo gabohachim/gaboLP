@@ -66,6 +66,31 @@ class DiscographyService {
     return http.get(url, headers: _headers());
   }
 
+  static bool _looksLikeYearTag(String s) {
+    final t = s.toLowerCase().trim();
+    if (t.isEmpty) return true;
+    if (t.contains('year')) return true;
+    if (t.contains('years')) return true;
+    final reDecade = RegExp(r'^\d{2,4}s$');
+    if (reDecade.hasMatch(t)) return true;
+    final reDigits = RegExp(r'\d');
+    if (reDigits.hasMatch(t)) return true;
+    return false;
+  }
+
+  static List<String> _pickGenres(List tags) {
+    final out = <String>[];
+    for (final t in tags) {
+      if (t is! Map<String, dynamic>) continue;
+      final name = (t['name'] as String?)?.trim();
+      if (name == null || name.isEmpty) continue;
+      if (_looksLikeYearTag(name)) continue;
+      out.add(name);
+      if (out.length >= 5) break;
+    }
+    return out;
+  }
+
   static String _cover250(String rgid) =>
       'https://coverartarchive.org/release-group/$rgid/front-250';
   static String _cover500(String rgid) =>
@@ -102,12 +127,11 @@ class DiscographyService {
     }
   }
 
-  /// ✅ Autocomplete: devuelve varias bandas mientras escribes
+  /// Autocomplete bandas
   static Future<List<ArtistHit>> searchArtists(String name) async {
     final n = name.trim();
     if (n.isEmpty) return [];
 
-    // búsqueda más flexible (no solo exacto)
     final url = Uri.parse(
       '$_mbBase/artist/?query=${Uri.encodeQueryComponent(n)}&fmt=json&limit=12',
     );
@@ -137,7 +161,6 @@ class DiscographyService {
     return out;
   }
 
-  /// ✅ Info precisa por ID (para país/género/reseña sin equivocarse de artista)
   static Future<ArtistInfo> getArtistInfoById(String artistId, {String? artistName}) async {
     final id = artistId.trim();
     if (id.isEmpty) return ArtistInfo(country: null, genres: [], bio: null);
@@ -146,46 +169,28 @@ class DiscographyService {
     final res = await _getJson(url);
 
     String? country;
-    final genres = <String>[];
+    List<String> genres = [];
     String? nameForBio = artistName;
 
     if (res.statusCode == 200) {
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       nameForBio ??= (data['name'] as String?)?.trim();
-
       country = (data['country'] as String?)?.trim();
 
       final tags = (data['tags'] as List?) ?? [];
-      for (final t in tags.take(5)) {
-        final tt = t as Map<String, dynamic>;
-        final name = (tt['name'] as String?)?.trim();
-        if (name != null && name.isNotEmpty) genres.add(name);
-      }
+      genres = _pickGenres(tags);
     }
 
-    final bio = (nameForBio == null || nameForBio!.isEmpty)
-        ? null
-        : await _fetchWikipediaBio(nameForBio!);
+    final bio = (nameForBio == null || nameForBio!.isEmpty) ? null : await _fetchWikipediaBio(nameForBio!);
 
     return ArtistInfo(country: country, genres: genres, bio: bio);
   }
 
-  /// (compat) si lo usas desde otra parte
-  static Future<ArtistInfo> getArtistInfo(String artistName) async {
-    final hits = await searchArtists(artistName);
-    if (hits.isEmpty) return ArtistInfo(country: null, genres: [], bio: null);
-    return getArtistInfoById(hits.first.id, artistName: hits.first.name);
-  }
-
-  /// ✅ Discografía precisa por artistId
   static Future<List<AlbumItem>> getDiscographyByArtistId(String artistId) async {
     final id = artistId.trim();
     if (id.isEmpty) return [];
 
-    final url = Uri.parse(
-      '$_mbBase/release-group/?artist=$id&fmt=json&limit=100',
-    );
-
+    final url = Uri.parse('$_mbBase/release-group/?artist=$id&fmt=json&limit=100');
     final res = await _getJson(url);
     if (res.statusCode != 200) return [];
 
@@ -193,7 +198,6 @@ class DiscographyService {
     final rgs = (data['release-groups'] as List?) ?? [];
 
     final out = <AlbumItem>[];
-
     for (final x in rgs) {
       final m = x as Map<String, dynamic>;
       final primaryType = (m['primary-type'] as String?)?.toLowerCase().trim();
@@ -215,7 +219,6 @@ class DiscographyService {
       ));
     }
 
-    // ordenar por año
     out.sort((a, b) {
       final ay = int.tryParse(a.year ?? '') ?? 9999;
       final by = int.tryParse(b.year ?? '') ?? 9999;
@@ -227,7 +230,6 @@ class DiscographyService {
     return out;
   }
 
-  /// Tracklist por releaseGroupId
   static Future<List<TrackItem>> getTracksFromReleaseGroup(String rgid) async {
     final urlRg = Uri.parse('$_mbBase/release-group/$rgid?inc=releases&fmt=json');
     final resRg = await _getJson(urlRg);
@@ -265,7 +267,6 @@ class DiscographyService {
         ));
       }
     }
-
     return tracksOut;
   }
 
