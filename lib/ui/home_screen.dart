@@ -32,9 +32,10 @@ class _HomeScreenState extends State<HomeScreen> {
   String lastArtist = '';
   String lastAlbum = '';
 
-  String? coverPreviewUrl;
-  String? mbidFound;
+  String? coverPreviewUrl; // url cover 500
+  String? mbidFound; // releaseGroupId
   String? genreFound;
+  String? countryFound;
   String? artistBioFound;
 
   bool autocompletando = false;
@@ -73,6 +74,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // ✅ Autocompleta año + género + país + reseña + cover
   Future<void> _autoCompletarMeta() async {
     if (lastArtist.trim().isEmpty || lastAlbum.trim().isEmpty) return;
 
@@ -81,6 +83,7 @@ class _HomeScreenState extends State<HomeScreen> {
       coverPreviewUrl = null;
       mbidFound = null;
       genreFound = null;
+      countryFound = null;
       artistBioFound = null;
       yearCtrl.clear();
     });
@@ -100,6 +103,9 @@ class _HomeScreenState extends State<HomeScreen> {
         genreFound = (meta.genre ?? '').trim().isEmpty ? null : meta.genre!.trim();
         mbidFound = meta.releaseGroupId;
         coverPreviewUrl = meta.cover500;
+
+        final c = (aInfo.country ?? '').trim();
+        countryFound = c.isEmpty ? null : c;
 
         final bio = (aInfo.bio ?? '').trim();
         artistBioFound = bio.isEmpty ? null : bio;
@@ -132,16 +138,18 @@ class _HomeScreenState extends State<HomeScreen> {
       coverPreviewUrl = null;
       mbidFound = null;
       genreFound = null;
+      countryFound = null;
       artistBioFound = null;
       yearCtrl.clear();
     });
 
     snack(res.isEmpty ? 'No lo tienes' : 'Ya lo tienes');
 
-    // limpiar barra
+    // ✅ limpiar barra después de buscar
     artistaCtrl.clear();
     albumCtrl.clear();
 
+    // ✅ si no existe y hay artista+album -> autocompletar
     if (mostrarAgregar) {
       await _autoCompletarMeta();
     }
@@ -162,10 +170,11 @@ class _HomeScreenState extends State<HomeScreen> {
       localCoverPath = await _downloadCoverToLocal(coverPreviewUrl!.trim());
     }
 
+    // reseña se guarda pero NO se muestra en lista, solo en detalle
     String? bioShort;
     final bio = (artistBioFound ?? '').trim();
     if (bio.isNotEmpty) {
-      bioShort = bio.length > 180 ? '${bio.substring(0, 180)}…' : bio;
+      bioShort = bio.length > 220 ? '${bio.substring(0, 220)}…' : bio;
     }
 
     try {
@@ -174,7 +183,8 @@ class _HomeScreenState extends State<HomeScreen> {
         album: album,
         year: year.isEmpty ? null : year,
         genre: genreFound,
-        artistBio: bioShort,
+        country: countryFound, // ✅ país guardado
+        artistBio: bioShort, // ✅ reseña guardada (solo detalle)
         coverPath: localCoverPath,
         mbid: mbidFound,
       );
@@ -187,6 +197,7 @@ class _HomeScreenState extends State<HomeScreen> {
         coverPreviewUrl = null;
         mbidFound = null;
         genreFound = null;
+        countryFound = null;
         artistBioFound = null;
         yearCtrl.clear();
       });
@@ -316,6 +327,7 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(height: 10),
         ElevatedButton(onPressed: buscar, child: const Text('Buscar')),
         const SizedBox(height: 12),
+
         if (resultados.isNotEmpty)
           Container(
             padding: const EdgeInsets.all(12),
@@ -350,7 +362,9 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
+
         const SizedBox(height: 12),
+
         if (mostrarAgregar) ...[
           Container(
             padding: const EdgeInsets.all(12),
@@ -370,11 +384,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (!autocompletando) ...[
                   Text('Año: ${yearCtrl.text.isEmpty ? '—' : yearCtrl.text}'),
                   Text('Género: ${genreFound ?? '—'}'),
+                  Text('País: ${countryFound ?? '—'}'),
                 ],
               ],
             ),
           ),
           const SizedBox(height: 10),
+
           if (coverPreviewUrl != null && coverPreviewUrl!.trim().isNotEmpty)
             Container(
               padding: const EdgeInsets.all(10),
@@ -403,7 +419,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
+
           const SizedBox(height: 10),
+
           TextField(
             controller: yearCtrl,
             keyboardType: TextInputType.number,
@@ -415,12 +433,14 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(height: 10),
+
           ElevatedButton(onPressed: autocompletando ? null : agregar, child: const Text('Agregar vinilo')),
         ],
       ],
     );
   }
 
+  // ✅ LISTA SIN RESEÑA, SOLO AÑO + GENERO + PAIS
   Widget listaCompleta({required bool conBorrar}) {
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: VinylDb.instance.getAll(),
@@ -437,21 +457,21 @@ class _HomeScreenState extends State<HomeScreen> {
           itemCount: items.length,
           itemBuilder: (context, i) {
             final v = items[i];
+
             final year = (v['year'] as String?)?.trim() ?? '';
-            final yearTxt = year.isEmpty ? '' : ' ($year)';
-            final bio = (v['artistBio'] as String?)?.trim() ?? '';
             final genre = (v['genre'] as String?)?.trim() ?? '';
+            final country = (v['country'] as String?)?.trim() ?? '';
+
+            final yearTxt = year.isEmpty ? '—' : year;
+            final genreTxt = genre.isEmpty ? '—' : genre;
+            final countryTxt = country.isEmpty ? '—' : country;
 
             return Card(
               color: Colors.white.withOpacity(0.88),
               child: ListTile(
                 leading: _leadingCover(v),
-                title: Text('LP N° ${v['numero']} — ${v['artista']} — ${v['album']}$yearTxt'),
-                subtitle: Text(
-                  bio.isNotEmpty ? bio : (genre.isNotEmpty ? 'Género: $genre' : ''),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                title: Text('LP N° ${v['numero']} — ${v['artista']} — ${v['album']}'),
+                subtitle: Text('Año: $yearTxt   •   Género: $genreTxt   •   País: $countryTxt'),
                 onTap: () {
                   showModalBottomSheet(
                     context: context,
@@ -461,7 +481,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
                     ),
                     builder: (_) => SizedBox(
-                      height: MediaQuery.of(context).size.height * 0.85,
+                      height: MediaQuery.of(context).size.height * 0.90,
                       child: VinylDetailSheet(vinyl: v),
                     ),
                   );
