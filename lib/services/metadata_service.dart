@@ -1,6 +1,22 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+class AlbumSuggest {
+  final String releaseGroupId;
+  final String title;
+  final String? year;
+  final String cover250;
+  final String cover500;
+
+  AlbumSuggest({
+    required this.releaseGroupId,
+    required this.title,
+    required this.cover250,
+    required this.cover500,
+    this.year,
+  });
+}
+
 class CoverCandidate {
   final String releaseGroupId;
   final String? year;
@@ -55,6 +71,89 @@ class MetadataService {
   static Future<http.Response> _getJson(Uri url) async {
     await _throttle();
     return http.get(url, headers: _headers());
+  }
+
+  static bool _looksLikeYearTag(String s) {
+    final t = s.toLowerCase().trim();
+    if (t.isEmpty) return true;
+    if (t.contains('year')) return true;
+    if (t.contains('years')) return true;
+    // 1990s, 2000s, 70s, etc.
+    final reDecade = RegExp(r'^\d{2,4}s$');
+    if (reDecade.hasMatch(t)) return true;
+    // si tiene muchos números, casi seguro no es género
+    final reDigits = RegExp(r'\d');
+    if (reDigits.hasMatch(t)) return true;
+    return false;
+  }
+
+  static String? _pickGenreFromTags(List tags) {
+    // Elegimos el primer tag que no sea “años / décadas / números”
+    for (final t in tags) {
+      if (t is! Map<String, dynamic>) continue;
+      final name = (t['name'] as String?)?.trim();
+      if (name == null || name.isEmpty) continue;
+      if (_looksLikeYearTag(name)) continue;
+      return name;
+    }
+    return null;
+  }
+
+  static Future<List<AlbumSuggest>> searchAlbumsForArtist({
+    required String artistName,
+    required String albumQuery,
+  }) async {
+    final a = artistName.trim();
+    final q = albumQuery.trim();
+    if (a.isEmpty || q.isEmpty) return [];
+
+    // Release-group search: artist + album partial
+    final mbQuery = 'artist:"$a" AND release:"$q" AND primarytype:album';
+    final url = Uri.parse(
+      '$_mbBase/release-group/?query=${Uri.encodeQueryComponent(mbQuery)}&fmt=json&limit=12',
+    );
+
+    final res = await _getJson(url);
+    if (res.statusCode != 200) return [];
+
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    final rgs = (data['release-groups'] as List?) ?? [];
+
+    final seen = <String>{};
+    final out = <AlbumSuggest>[];
+
+    for (final x in rgs) {
+      final m = x as Map<String, dynamic>;
+      final id = m['id'] as String?;
+      final title = m['title'] as String?;
+      if (id == null || title == null) continue;
+      if (seen.contains(id)) continue;
+      seen.add(id);
+
+      final frd = (m['first-release-date'] as String?) ?? '';
+      final year = frd.length >= 4 ? frd.substring(0, 4) : null;
+
+      out.add(AlbumSuggest(
+        releaseGroupId: id,
+        title: title,
+        year: year,
+        cover250: 'https://coverartarchive.org/release-group/$id/front-250',
+        cover500: 'https://coverartarchive.org/release-group/$id/front-500',
+      ));
+
+      if (out.length >= 8) break;
+    }
+
+    // orden simple por año asc
+    out.sort((a, b) {
+      final ay = int.tryParse(a.year ?? '') ?? 9999;
+      final by = int.tryParse(b.year ?? '') ?? 9999;
+      final c = ay.compareTo(by);
+      if (c != 0) return c;
+      return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+    });
+
+    return out;
   }
 
   static Future<List<CoverCandidate>> fetchCoverCandidates({
@@ -118,14 +217,14 @@ class MetadataService {
     String? year;
     String? genre;
 
-    // 1) releaseGroupId y year
+    // 1) rgid y year por releases
     final options = await fetchCoverCandidates(artist: artist, album: album);
     if (options.isNotEmpty) {
       rgid = options.first.releaseGroupId;
       year = options.first.year;
     }
 
-    // 2) género + año más confiable (first-release-date) desde release-group tags
+    // 2) tags del release-group (género) + first-release-date
     if (rgid != null && rgid.isNotEmpty) {
       final urlRg = Uri.parse('$_mbBase/release-group/$rgid?inc=tags&fmt=json');
       final resRg = await _getJson(urlRg);
@@ -139,11 +238,7 @@ class MetadataService {
         }
 
         final tags = (dataRg['tags'] as List?) ?? [];
-        if (tags.isNotEmpty) {
-          final t0 = tags.first as Map<String, dynamic>;
-          final g = (t0['name'] as String?)?.trim();
-          if (g != null && g.isNotEmpty) genre = g;
-        }
+        genre ??= _pickGenreFromTags(tags);
       }
     }
 
