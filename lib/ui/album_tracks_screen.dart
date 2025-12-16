@@ -1,15 +1,9 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
-
-import '../db/vinyl_db.dart';
 import '../services/discography_service.dart';
 
 class AlbumTracksScreen extends StatefulWidget {
   final AlbumItem album;
-  final String artistName; // 👈 ahora lo recibimos
+  final String artistName;
 
   const AlbumTracksScreen({
     super.key,
@@ -23,113 +17,47 @@ class AlbumTracksScreen extends StatefulWidget {
 
 class _AlbumTracksScreenState extends State<AlbumTracksScreen> {
   bool loading = true;
+  String? msg;
   List<TrackItem> tracks = [];
-
-  bool checkingOwned = true;
-  bool isOwned = false;
 
   @override
   void initState() {
     super.initState();
-    _loadTracks();
-    _checkOwned();
+    _load();
   }
 
-  void snack(String t) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
-  }
-
-  String _norm(String s) => s.trim().toLowerCase();
-  String _key(String artist, String album) => '${_norm(artist)}|${_norm(album)}';
-
-  Future<void> _checkOwned() async {
-    setState(() => checkingOwned = true);
-    final res = await VinylDb.instance.search(
-      artista: widget.artistName.trim(),
-      album: widget.album.title.trim(),
-    );
-    if (!mounted) return;
+  Future<void> _load() async {
     setState(() {
-      isOwned = res.isNotEmpty;
-      checkingOwned = false;
+      loading = true;
+      msg = null;
+      tracks = [];
     });
-  }
 
-  Future<String?> _downloadCoverToLocal(String url) async {
-    try {
-      final res = await http.get(Uri.parse(url));
-      if (res.statusCode != 200) return null;
+    final list = await DiscographyService.getTracksFromReleaseGroup(widget.album.releaseGroupId);
 
-      final dir = await getApplicationDocumentsDirectory();
-      final coversDir = Directory(p.join(dir.path, 'covers'));
-      if (!await coversDir.exists()) {
-        await coversDir.create(recursive: true);
-      }
-
-      final ct = res.headers['content-type'] ?? '';
-      final ext = ct.contains('png') ? 'png' : 'jpg';
-
-      final filename = 'cover_${DateTime.now().millisecondsSinceEpoch}.$ext';
-      final file = File(p.join(coversDir.path, filename));
-      await file.writeAsBytes(res.bodyBytes);
-      return file.path;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<void> _addLp() async {
-    if (isOwned) {
-      snack('Ya lo tienes ✅');
-      return;
-    }
-
-    final artist = widget.artistName.trim();
-    final album = widget.album.title.trim();
-    final year = (widget.album.year ?? '').trim();
-
-    String? coverPath;
-    final coverUrl = widget.album.coverUrl;
-    if (coverUrl != null && coverUrl.trim().isNotEmpty) {
-      // mejor calidad:
-      final url = coverUrl.replaceAll('front-250', 'front-500');
-      coverPath = await _downloadCoverToLocal(url);
-    }
-
-    try {
-      await VinylDb.instance.insertVinyl(
-        artista: artist,
-        album: album,
-        year: year.isEmpty ? null : year,
-        coverPath: coverPath,
-        mbid: null,
-      );
-      setState(() => isOwned = true);
-      snack('Agregado a tu colección ✅');
-    } catch (_) {
-      setState(() => isOwned = true);
-      snack('Ya lo tenías (Artista + Álbum)');
-    }
-  }
-
-  Future<void> _loadTracks() async {
-    setState(() => loading = true);
-    final res = await DiscographyService.getTracksFromReleaseGroup(widget.album.id);
     if (!mounted) return;
+
     setState(() {
-      tracks = res;
+      tracks = list;
       loading = false;
+      msg = list.isEmpty ? 'No encontré canciones.' : null;
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final al = widget.album;
+    final y = widget.album.year ?? '—';
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(al.title),
+        title: Text(widget.album.title),
+        actions: [
+          IconButton(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Recargar canciones',
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(14),
@@ -137,79 +65,49 @@ class _AlbumTracksScreenState extends State<AlbumTracksScreen> {
           children: [
             Row(
               children: [
-                if (al.coverUrl != null)
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: Image.network(
-                      al.coverUrl!,
-                      width: 85,
-                      height: 85,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const Icon(Icons.album, size: 60),
-                    ),
-                  )
-                else
-                  const Icon(Icons.album, size: 60),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.network(
+                    widget.album.cover250,
+                    width: 72,
+                    height: 72,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Icon(Icons.album, size: 48),
+                  ),
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    '${widget.artistName}\nAño: ${al.year ?? '—'}',
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                    '${widget.artistName}\nAño: $y',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
                   ),
                 ),
               ],
             ),
-
-            const SizedBox(height: 10),
-
-            // ✅ Botón agregar LP en tracklist
-            Row(
-              children: [
-                Expanded(
-                  child: checkingOwned
-                      ? const LinearProgressIndicator()
-                      : isOwned
-                          ? Container(
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                color: Colors.green.withOpacity(0.15),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: const Text(
-                                'Ya lo tienes ✅',
-                                style: TextStyle(fontWeight: FontWeight.w800),
-                              ),
-                            )
-                          : ElevatedButton(
-                              onPressed: _addLp,
-                              child: const Text('Agregar LP'),
-                            ),
-                ),
-              ],
-            ),
-
             const SizedBox(height: 12),
 
             if (loading) const LinearProgressIndicator(),
-            const SizedBox(height: 10),
+            if (!loading && msg != null)
+              Padding(
+                padding: const EdgeInsets.all(10),
+                child: Text(msg!),
+              ),
 
-            Expanded(
-              child: tracks.isEmpty && !loading
-                  ? const Center(child: Text('No encontré canciones para este álbum.'))
-                  : ListView.builder(
-                      itemCount: tracks.length,
-                      itemBuilder: (context, i) {
-                        final t = tracks[i];
-                        return Card(
-                          child: ListTile(
-                            title: Text('${t.number}. ${t.title}'),
-                            trailing: Text(t.length ?? ''),
-                          ),
-                        );
-                      },
-                    ),
-            ),
+            if (!loading && tracks.isNotEmpty)
+              Expanded(
+                child: ListView.separated(
+                  itemCount: tracks.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, i) {
+                    final t = tracks[i];
+                    return ListTile(
+                      dense: true,
+                      title: Text('${t.number}. ${t.title}'),
+                      trailing: Text(t.length ?? ''),
+                    );
+                  },
+                ),
+              ),
           ],
         ),
       ),
