@@ -14,7 +14,6 @@ class CoverCandidate {
     this.year,
   });
 
-  // compatibilidad por si algo usa .mbid
   String get mbid => releaseGroupId;
 }
 
@@ -110,7 +109,7 @@ class MetadataService {
     return out;
   }
 
-  /// ✅ Devuelve año + género + cover + releaseGroupId (lo usa HomeScreen)
+  /// Año + género + cover + releaseGroupId (para autocompletar)
   static Future<AlbumAutoMeta> fetchAutoMetadata({
     required String artist,
     required String album,
@@ -119,14 +118,14 @@ class MetadataService {
     String? year;
     String? genre;
 
-    // 1) Conseguir releaseGroupId y año desde releases
+    // 1) releaseGroupId y year
     final options = await fetchCoverCandidates(artist: artist, album: album);
     if (options.isNotEmpty) {
       rgid = options.first.releaseGroupId;
       year = options.first.year;
     }
 
-    // 2) Género: tags del release-group (si hay)
+    // 2) género + año más confiable (first-release-date) desde release-group tags
     if (rgid != null && rgid.isNotEmpty) {
       final urlRg = Uri.parse('$_mbBase/release-group/$rgid?inc=tags&fmt=json');
       final resRg = await _getJson(urlRg);
@@ -134,7 +133,6 @@ class MetadataService {
       if (resRg.statusCode == 200) {
         final dataRg = jsonDecode(resRg.body) as Map<String, dynamic>;
 
-        // año más fiable: first-release-date
         final frd = (dataRg['first-release-date'] as String?) ?? '';
         if ((year == null || year.isEmpty) && frd.length >= 4) {
           year = frd.substring(0, 4);
