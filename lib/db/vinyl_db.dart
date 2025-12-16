@@ -18,7 +18,7 @@ class VinylDb {
 
     return openDatabase(
       path,
-      version: 4,
+      version: 5, // ✅ subimos versión por country
       onCreate: (d, v) async {
         await d.execute('''
           CREATE TABLE vinyls(
@@ -28,6 +28,7 @@ class VinylDb {
             album TEXT NOT NULL,
             year TEXT,
             genre TEXT,
+            country TEXT,
             artistBio TEXT,
             coverPath TEXT,
             mbid TEXT
@@ -39,11 +40,13 @@ class VinylDb {
       onUpgrade: (d, oldV, newV) async {
         // migraciones sin perder datos
         if (oldV < 3) {
-          // si vienes de una versión antigua, agrega genre si no existe
           await d.execute('ALTER TABLE vinyls ADD COLUMN genre TEXT;');
         }
         if (oldV < 4) {
           await d.execute('ALTER TABLE vinyls ADD COLUMN artistBio TEXT;');
+        }
+        if (oldV < 5) {
+          await d.execute('ALTER TABLE vinyls ADD COLUMN country TEXT;');
         }
       },
     );
@@ -118,6 +121,7 @@ class VinylDb {
     required String album,
     String? year,
     String? genre,
+    String? country,
     String? artistBio,
     String? coverPath,
     String? mbid,
@@ -137,6 +141,7 @@ class VinylDb {
         'album': album.trim(),
         'year': year?.trim(),
         'genre': genre?.trim(),
+        'country': country?.trim(),
         'artistBio': artistBio?.trim(),
         'coverPath': coverPath?.trim(),
         'mbid': mbid?.trim(),
