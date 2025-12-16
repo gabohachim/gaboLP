@@ -1,9 +1,9 @@
+import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart';
 
 class VinylDb {
-  static final VinylDb instance = VinylDb._();
   VinylDb._();
+  static final instance = VinylDb._();
 
   Database? _db;
 
@@ -13,102 +13,139 @@ class VinylDb {
   }
 
   Future<Database> _open() async {
-    final path = join(await getDatabasesPath(), 'vinilos.db');
+    final base = await getDatabasesPath();
+    final path = p.join(base, 'gabolp.db');
+
     return openDatabase(
       path,
-      version: 2,
-      onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE vinilos (
+      version: 4, // ✅ subimos versión por columnas nuevas
+      onCreate: (d, v) async {
+        await d.execute('''
+          CREATE TABLE vinyls(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            numero INTEGER UNIQUE NOT NULL,
+            numero INTEGER NOT NULL,
             artista TEXT NOT NULL,
             album TEXT NOT NULL,
             year TEXT,
+            genre TEXT,
+            artistBio TEXT,
             coverPath TEXT,
-            mbid TEXT,
-            UNIQUE(artista, album)
-          )
+            mbid TEXT
+          );
         ''');
+        await d.execute('CREATE INDEX idx_artist ON vinyls(artista);');
+        await d.execute('CREATE INDEX idx_album ON vinyls(album);');
       },
-      onUpgrade: (db, oldV, newV) async {
-        if (oldV < 2) {
-          await db.execute('ALTER TABLE vinilos ADD COLUMN coverPath TEXT;');
-          await db.execute('ALTER TABLE vinilos ADD COLUMN mbid TEXT;');
+      onUpgrade: (d, oldV, newV) async {
+        // ✅ migraciones sin perder datos
+        if (oldV < 3) {
+          await d.execute('ALTER TABLE vinyls ADD COLUMN genre TEXT;');
+        }
+        if (oldV < 4) {
+          await d.execute('ALTER TABLE vinyls ADD COLUMN artistBio TEXT;');
         }
       },
     );
   }
 
   Future<int> getCount() async {
-    final database = await db;
-    final res = await database.rawQuery('SELECT COUNT(*) as c FROM vinilos');
-    return (res.first['c'] as int?) ?? 0;
+    final d = await db;
+    final r = Sqflite.firstIntValue(await d.rawQuery('SELECT COUNT(*) FROM vinyls'));
+    return r ?? 0;
+  }
+
+  Future<List<Map<String, dynamic>>> getAll() async {
+    final d = await db;
+    return d.query('vinyls', orderBy: 'numero ASC');
+  }
+
+  Future<List<Map<String, dynamic>>> search({
+    required String artista,
+    required String album,
+  }) async {
+    final d = await db;
+    final a = artista.trim();
+    final al = album.trim();
+
+    if (a.isNotEmpty && al.isNotEmpty) {
+      return d.query(
+        'vinyls',
+        where: 'LOWER(artista) LIKE ? AND LOWER(album) LIKE ?',
+        whereArgs: ['%${a.toLowerCase()}%', '%${al.toLowerCase()}%'],
+        orderBy: 'numero ASC',
+      );
+    }
+    if (a.isNotEmpty) {
+      return d.query(
+        'vinyls',
+        where: 'LOWER(artista) LIKE ?',
+        whereArgs: ['%${a.toLowerCase()}%'],
+        orderBy: 'numero ASC',
+      );
+    }
+    return d.query(
+      'vinyls',
+      where: 'LOWER(album) LIKE ?',
+      whereArgs: ['%${al.toLowerCase()}%'],
+      orderBy: 'numero ASC',
+    );
+  }
+
+  Future<bool> existsExact({required String artista, required String album}) async {
+    final d = await db;
+    final a = artista.trim().toLowerCase();
+    final al = album.trim().toLowerCase();
+    final rows = await d.query(
+      'vinyls',
+      columns: ['id'],
+      where: 'LOWER(artista)=? AND LOWER(album)=?',
+      whereArgs: [a, al],
+      limit: 1,
+    );
+    return rows.isNotEmpty;
   }
 
   Future<int> _nextNumero() async {
-    final database = await db;
-    final res = await database.rawQuery('SELECT MAX(numero) as m FROM vinilos');
-    final maxNum = (res.first['m'] as int?) ?? 0;
-    return maxNum + 1; // empieza en 1
+    final d = await db;
+    final r = await d.rawQuery('SELECT MAX(numero) as m FROM vinyls');
+    final m = (r.first['m'] as int?) ?? 0;
+    return m + 1;
   }
 
   Future<void> insertVinyl({
     required String artista,
     required String album,
     String? year,
+    String? genre,
+    String? artistBio,
     String? coverPath,
     String? mbid,
   }) async {
-    final database = await db;
-    await database.insert('vinilos', {
-      'numero': await _nextNumero(),
-      'artista': artista.trim(),
-      'album': album.trim(),
-      'year': (year ?? '').trim(),
-      'coverPath': (coverPath ?? '').trim(),
-      'mbid': (mbid ?? '').trim(),
-    });
-  }
+    final d = await db;
 
-  Future<List<Map<String, dynamic>>> search({
-    required String artista,
-    String album = '',
-  }) async {
-    final database = await db;
+    final exists = await existsExact(artista: artista, album: album);
+    if (exists) throw Exception('Duplicado');
 
-    final a = artista.trim();
-    final al = album.trim();
+    final numero = await _nextNumero();
 
-    if (a.isEmpty && al.isEmpty) return [];
-
-    final where = <String>[];
-    final args = <String>[];
-
-    if (a.isNotEmpty) {
-      where.add("artista LIKE ? COLLATE NOCASE");
-      args.add("%$a%");
-    }
-    if (al.isNotEmpty) {
-      where.add("album LIKE ? COLLATE NOCASE");
-      args.add("%$al%");
-    }
-
-    return database.query(
-      'vinilos',
-      where: where.join(' AND '),
-      whereArgs: args,
-      orderBy: 'numero ASC',
+    await d.insert(
+      'vinyls',
+      {
+        'numero': numero,
+        'artista': artista.trim(),
+        'album': album.trim(),
+        'year': year?.trim(),
+        'genre': genre?.trim(),
+        'artistBio': artistBio?.trim(),
+        'coverPath': coverPath?.trim(),
+        'mbid': mbid?.trim(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.abort,
     );
   }
 
-  Future<List<Map<String, dynamic>>> getAll() async {
-    final database = await db;
-    return database.query('vinilos', orderBy: 'numero ASC');
-  }
-
   Future<void> deleteById(int id) async {
-    final database = await db;
-    await database.delete('vinilos', where: 'id = ?', whereArgs: [id]);
+    final d = await db;
+    await d.delete('vinyls', where: 'id=?', whereArgs: [id]);
   }
 }
