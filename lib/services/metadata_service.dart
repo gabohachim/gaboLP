@@ -76,19 +76,15 @@ class MetadataService {
   static bool _looksLikeYearTag(String s) {
     final t = s.toLowerCase().trim();
     if (t.isEmpty) return true;
-    if (t.contains('year')) return true;
-    if (t.contains('years')) return true;
-    // 1990s, 2000s, 70s, etc.
-    final reDecade = RegExp(r'^\d{2,4}s$');
+    if (t.contains('year') || t.contains('years')) return true;
+    final reDecade = RegExp(r'^\d{2,4}s$'); // 1990s
     if (reDecade.hasMatch(t)) return true;
-    // si tiene muchos números, casi seguro no es género
     final reDigits = RegExp(r'\d');
     if (reDigits.hasMatch(t)) return true;
     return false;
   }
 
   static String? _pickGenreFromTags(List tags) {
-    // Elegimos el primer tag que no sea “años / décadas / números”
     for (final t in tags) {
       if (t is! Map<String, dynamic>) continue;
       final name = (t['name'] as String?)?.trim();
@@ -99,6 +95,8 @@ class MetadataService {
     return null;
   }
 
+  /// ✅ Autocompletar álbum: con 1 letra ya busca
+  /// Usa wildcard: release:(q*)
   static Future<List<AlbumSuggest>> searchAlbumsForArtist({
     required String artistName,
     required String albumQuery,
@@ -107,10 +105,11 @@ class MetadataService {
     final q = albumQuery.trim();
     if (a.isEmpty || q.isEmpty) return [];
 
-    // Release-group search: artist + album partial
-    final mbQuery = 'artist:"$a" AND release:"$q" AND primarytype:album';
+    // IMPORTANT: q* para que con 1 letra ya devuelva
+    final mbQuery = 'artist:"$a" AND release:(${q}*) AND primarytype:album';
+
     final url = Uri.parse(
-      '$_mbBase/release-group/?query=${Uri.encodeQueryComponent(mbQuery)}&fmt=json&limit=12',
+      '$_mbBase/release-group/?query=${Uri.encodeQueryComponent(mbQuery)}&fmt=json&limit=18',
     );
 
     final res = await _getJson(url);
@@ -119,8 +118,8 @@ class MetadataService {
     final data = jsonDecode(res.body) as Map<String, dynamic>;
     final rgs = (data['release-groups'] as List?) ?? [];
 
-    final seen = <String>{};
     final out = <AlbumSuggest>[];
+    final seen = <String>{};
 
     for (final x in rgs) {
       final m = x as Map<String, dynamic>;
@@ -141,10 +140,9 @@ class MetadataService {
         cover500: 'https://coverartarchive.org/release-group/$id/front-500',
       ));
 
-      if (out.length >= 8) break;
+      if (out.length >= 12) break;
     }
 
-    // orden simple por año asc
     out.sort((a, b) {
       final ay = int.tryParse(a.year ?? '') ?? 9999;
       final by = int.tryParse(b.year ?? '') ?? 9999;
@@ -165,9 +163,7 @@ class MetadataService {
     if (a.isEmpty || al.isEmpty) return [];
 
     final q = 'release:"$al" AND artist:"$a"';
-    final url = Uri.parse(
-      '$_mbBase/release/?query=${Uri.encodeQueryComponent(q)}&fmt=json&limit=20',
-    );
+    final url = Uri.parse('$_mbBase/release/?query=${Uri.encodeQueryComponent(q)}&fmt=json&limit=25');
 
     final res = await _getJson(url);
     if (res.statusCode != 200) return [];
@@ -176,8 +172,8 @@ class MetadataService {
     final releases = (data['releases'] as List?) ?? [];
     if (releases.isEmpty) return [];
 
-    final seen = <String>{};
     final out = <CoverCandidate>[];
+    final seen = <String>{};
 
     for (final r in releases) {
       final m = r as Map<String, dynamic>;
@@ -188,18 +184,14 @@ class MetadataService {
       final rg = m['release-group'] as Map<String, dynamic>?;
       final rgid = rg?['id'] as String?;
       if (rgid == null) continue;
-
       if (seen.contains(rgid)) continue;
       seen.add(rgid);
-
-      final u250 = 'https://coverartarchive.org/release-group/$rgid/front-250';
-      final u500 = 'https://coverartarchive.org/release-group/$rgid/front-500';
 
       out.add(CoverCandidate(
         releaseGroupId: rgid,
         year: year,
-        coverUrl250: u250,
-        coverUrl500: u500,
+        coverUrl250: 'https://coverartarchive.org/release-group/$rgid/front-250',
+        coverUrl500: 'https://coverartarchive.org/release-group/$rgid/front-500',
       ));
 
       if (out.length >= 8) break;
@@ -208,23 +200,22 @@ class MetadataService {
     return out;
   }
 
-  /// Año + género + cover + releaseGroupId (para autocompletar)
-  static Future<AlbumAutoMeta> fetchAutoMetadata({
+  /// ✅ Igual que fetchAutoMetadata, pero si ya tienes candidates, los usa (sin doble llamado)
+  static Future<AlbumAutoMeta> fetchAutoMetadataWithCandidates({
     required String artist,
     required String album,
+    List<CoverCandidate>? candidates,
   }) async {
     String? rgid;
     String? year;
     String? genre;
 
-    // 1) rgid y year por releases
-    final options = await fetchCoverCandidates(artist: artist, album: album);
+    final options = candidates ?? await fetchCoverCandidates(artist: artist, album: album);
     if (options.isNotEmpty) {
       rgid = options.first.releaseGroupId;
       year = options.first.year;
     }
 
-    // 2) tags del release-group (género) + first-release-date
     if (rgid != null && rgid.isNotEmpty) {
       final urlRg = Uri.parse('$_mbBase/release-group/$rgid?inc=tags&fmt=json');
       final resRg = await _getJson(urlRg);
@@ -249,5 +240,13 @@ class MetadataService {
       cover250: (rgid == null) ? null : 'https://coverartarchive.org/release-group/$rgid/front-250',
       cover500: (rgid == null) ? null : 'https://coverartarchive.org/release-group/$rgid/front-500',
     );
+  }
+
+  /// compat
+  static Future<AlbumAutoMeta> fetchAutoMetadata({
+    required String artist,
+    required String album,
+  }) {
+    return fetchAutoMetadataWithCandidates(artist: artist, album: album);
   }
 }
