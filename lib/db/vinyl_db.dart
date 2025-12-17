@@ -1,157 +1,82 @@
-import 'package:path/path.dart' as p;
+import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
 class VinylDb {
   VinylDb._();
-  static final instance = VinylDb._();
+  static final VinylDb instance = VinylDb._();
+
+  static const String table = 'vinyls';
 
   Database? _db;
 
-  Future<Database> get db async {
+  Future<Database> get database async {
     _db ??= await _open();
     return _db!;
   }
 
   Future<Database> _open() async {
-    final base = await getDatabasesPath();
-    final path = p.join(base, 'gabolp.db');
+    final dbPath = await getDatabasesPath();
+    final path = join(dbPath, 'gabolp.db');
 
     return openDatabase(
       path,
-      version: 5, // ✅ subimos versión por country
-      onCreate: (d, v) async {
-        await d.execute('''
-          CREATE TABLE vinyls(
+      version: 1,
+      onCreate: (db, _) async {
+        await db.execute('''
+          CREATE TABLE $table (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             numero INTEGER NOT NULL,
-            artista TEXT NOT NULL,
+            artist TEXT NOT NULL,
             album TEXT NOT NULL,
-            year TEXT,
+            year INTEGER,
             genre TEXT,
             country TEXT,
-            artistBio TEXT,
-            coverPath TEXT,
-            mbid TEXT
-          );
+            coverPath TEXT
+          )
         ''');
-        await d.execute('CREATE INDEX idx_artist ON vinyls(artista);');
-        await d.execute('CREATE INDEX idx_album ON vinyls(album);');
-      },
-      onUpgrade: (d, oldV, newV) async {
-        // migraciones sin perder datos
-        if (oldV < 3) {
-          await d.execute('ALTER TABLE vinyls ADD COLUMN genre TEXT;');
-        }
-        if (oldV < 4) {
-          await d.execute('ALTER TABLE vinyls ADD COLUMN artistBio TEXT;');
-        }
-        if (oldV < 5) {
-          await d.execute('ALTER TABLE vinyls ADD COLUMN country TEXT;');
-        }
       },
     );
   }
 
-  Future<int> getCount() async {
-    final d = await db;
-    final r = Sqflite.firstIntValue(await d.rawQuery('SELECT COUNT(*) FROM vinyls'));
-    return r ?? 0;
-  }
-
+  /// Devuelve todos los vinilos (para backup)
   Future<List<Map<String, dynamic>>> getAll() async {
-    final d = await db;
-    return d.query('vinyls', orderBy: 'numero ASC');
+    final db = await database;
+    return db.query(table, orderBy: 'numero ASC');
   }
 
-  Future<List<Map<String, dynamic>>> search({
-    required String artista,
-    required String album,
-  }) async {
-    final d = await db;
-    final a = artista.trim();
-    final al = album.trim();
-
-    if (a.isNotEmpty && al.isNotEmpty) {
-      return d.query(
-        'vinyls',
-        where: 'LOWER(artista) LIKE ? AND LOWER(album) LIKE ?',
-        whereArgs: ['%${a.toLowerCase()}%', '%${al.toLowerCase()}%'],
-        orderBy: 'numero ASC',
-      );
-    }
-    if (a.isNotEmpty) {
-      return d.query(
-        'vinyls',
-        where: 'LOWER(artista) LIKE ?',
-        whereArgs: ['%${a.toLowerCase()}%'],
-        orderBy: 'numero ASC',
-      );
-    }
-    return d.query(
-      'vinyls',
-      where: 'LOWER(album) LIKE ?',
-      whereArgs: ['%${al.toLowerCase()}%'],
-      orderBy: 'numero ASC',
-    );
+  /// Inserta vinilo (si ya tienes tu propia lógica, puedes seguir usándola)
+  Future<int> insertVinyl(Map<String, dynamic> row) async {
+    final db = await database;
+    return db.insert(table, row);
   }
 
-  Future<bool> existsExact({required String artista, required String album}) async {
-    final d = await db;
-    final a = artista.trim().toLowerCase();
-    final al = album.trim().toLowerCase();
-    final rows = await d.query(
-      'vinyls',
-      columns: ['id'],
-      where: 'LOWER(artista)=? AND LOWER(album)=?',
-      whereArgs: [a, al],
-      limit: 1,
-    );
-    return rows.isNotEmpty;
+  Future<int> deleteById(int id) async {
+    final db = await database;
+    return db.delete(table, where: 'id = ?', whereArgs: [id]);
   }
 
-  Future<int> _nextNumero() async {
-    final d = await db;
-    final r = await d.rawQuery('SELECT MAX(numero) as m FROM vinyls');
-    final m = (r.first['m'] as int?) ?? 0;
-    return m + 1;
-  }
+  /// ✅ ESTE ES EL MÉTODO CLAVE PARA “Restaurar lista”
+  /// Reemplaza toda la colección por el backup
+  Future<void> replaceAllFromBackup(List<Map<String, dynamic>> vinyls) async {
+    final db = await database;
 
-  Future<void> insertVinyl({
-    required String artista,
-    required String album,
-    String? year,
-    String? genre,
-    String? country,
-    String? artistBio,
-    String? coverPath,
-    String? mbid,
-  }) async {
-    final d = await db;
+    await db.transaction((txn) async {
+      await txn.delete(table);
 
-    final exists = await existsExact(artista: artista, album: album);
-    if (exists) throw Exception('Duplicado');
+      vinyls.sort((a, b) {
+        final na = (a['numero'] ?? 0) as int;
+        final nb = (b['numero'] ?? 0) as int;
+        return na.compareTo(nb);
+      });
 
-    final numero = await _nextNumero();
+      for (final v in vinyls) {
+        final row = Map<String, dynamic>.from(v);
 
-    await d.insert(
-      'vinyls',
-      {
-        'numero': numero,
-        'artista': artista.trim(),
-        'album': album.trim(),
-        'year': year?.trim(),
-        'genre': genre?.trim(),
-        'country': country?.trim(),
-        'artistBio': artistBio?.trim(),
-        'coverPath': coverPath?.trim(),
-        'mbid': mbid?.trim(),
-      },
-      conflictAlgorithm: ConflictAlgorithm.abort,
-    );
-  }
+        // Si viene un id viejo, lo quitamos (porque autoincrement)
+        row.remove('id');
 
-  Future<void> deleteById(int id) async {
-    final d = await db;
-    await d.delete('vinyls', where: 'id=?', whereArgs: [id]);
+        await txn.insert(table, row);
+      }
+    });
   }
 }
