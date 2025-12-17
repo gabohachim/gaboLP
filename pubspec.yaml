@@ -1,8 +1,7 @@
 name: gabolp
-description: Colección vinilos
+description: GaBoLP - Colección de vinilos
 publish_to: "none"
-
-version: 1.0.3+4
+version: 1.0.0+1
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -10,24 +9,30 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+
+  # Base de datos
   sqflite: ^2.3.3
   path: ^1.9.0
-  image_picker: ^1.1.2
-  http: ^1.2.2
+
+  # Respaldo (backup)
+  shared_preferences: ^2.2.3
   path_provider: ^2.1.4
+  file_picker: ^8.1.2
+
+  # (Opcional pero recomendado para UI iOS/Android)
+  cupertino_icons: ^1.0.6
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
-  flutter_native_splash: ^2.4.1
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/splash/splash.png
 
-flutter_native_splash:
-  color: "#121212"
-  image: assets/splash/splash.png
-  android: true
+  # Si ya tenías assets, ponlos aquí abajo.
+  # Ejemplos (ajusta a lo tuyo):
+  # assets:
+  #   - assets/
+  #   - assets/images/
+  #   - assets/splash/
