@@ -1,7 +1,6 @@
 name: gabolp
 description: GaBoLP - Colección de vinilos
 publish_to: "none"
-
 version: 1.0.0+1
 
 environment:
@@ -26,17 +25,21 @@ dependencies:
   cupertino_icons: ^1.0.6
 
 dev_dependencies:
- dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_native_splash: ^2.4.0
+  flutter_lints: ^4.0.0
 
+  # Splash generator
+  flutter_native_splash: ^2.4.0
 
 flutter:
   uses-material-design: true
-  flutter_native_splash:
+  assets:
+    - assets/
+
+# ✅ ESTO VA FUERA de "flutter:"
+flutter_native_splash:
   color: "#000000"
   image: assets/splash.png
   android: true
   ios: false
-
