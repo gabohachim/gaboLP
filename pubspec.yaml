@@ -1,6 +1,7 @@
 name: gabolp
 description: GaBoLP - Colección de vinilos
 publish_to: "none"
+
 version: 1.0.0+1
 
 environment:
@@ -14,12 +15,14 @@ dependencies:
   sqflite: ^2.3.3
   path: ^1.9.0
 
-  # Respaldo (backup)
-  shared_preferences: ^2.2.3
-  path_provider: ^2.1.4
-  file_picker: ^8.1.2
+  # Google / Nube
+  google_sign_in: ^6.2.1
+  googleapis: ^13.2.0
+  http: ^1.2.2
 
-  # (Opcional pero recomendado para UI iOS/Android)
+  # Respaldo / preferencias
+  shared_preferences: ^2.2.3
+
   cupertino_icons: ^1.0.6
 
 dev_dependencies:
@@ -29,10 +32,3 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-
-  # Si ya tenías assets, ponlos aquí abajo.
-  # Ejemplos (ajusta a lo tuyo):
-  # assets:
-  #   - assets/
-  #   - assets/images/
-  #   - assets/splash/
