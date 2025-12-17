@@ -613,7 +613,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ? IconButton(
                         icon: const Icon(Icons.delete),
                         onPressed: () async {
-                          await VinylDb.instance.deleteById(v['id'] as int);
+                          await vinylDb.instance.deleteById(v['id'] as int);
                           await DriveBackupService.autoBackupIfEnabled();
                           snack('Borrado');
                           setState(() {});
