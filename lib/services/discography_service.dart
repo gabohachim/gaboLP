@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
-/// Model para autocompletar artistas
 class ArtistHit {
   final String id;
   final String name;
@@ -14,12 +13,11 @@ class ArtistHit {
   });
 }
 
-/// Info de artista (para mostrar país/género/bio)
 class ArtistInfo {
   final String name;
   final String? country;
-  final String? genre; // ✅ lo pedías
-  final String? bioEs; // ✅ reseña en español (simple)
+  final String? genre;
+  final String? bioEs;
 
   ArtistInfo({
     required this.name,
@@ -29,7 +27,6 @@ class ArtistInfo {
   });
 }
 
-/// Item de álbum para discografía
 class AlbumItem {
   final String id; // release-group mbid
   final String title;
@@ -42,11 +39,10 @@ class AlbumItem {
   });
 }
 
-/// ✅ Tracklist
 class TrackItem {
   final int number;
   final String title;
-  final String? length; // mm:ss
+  final String? length;
 
   TrackItem({
     required this.number,
@@ -57,16 +53,18 @@ class TrackItem {
 
 class DiscographyService {
   static const _mbBase = 'https://musicbrainz.org/ws/2';
-  static const _ua =
-      'GaBoLP/1.0 ( contact: gabo.hachim@gmail.com )'; // User-Agent recomendado
+  static const _ua = 'GaBoLP/1.0 ( contact: gabo.hachim@gmail.com )';
 
   static Map<String, String> get _headers => {
         'User-Agent': _ua,
         'Accept': 'application/json',
       };
 
-  /// Buscar artistas (autocompletar)
-  static Future<List<ArtistHit>> searchArtists(String query) async {
+  /// ✅ Buscar artistas (autocompletar) con parámetro limit
+  static Future<List<ArtistHit>> searchArtists(
+    String query, {
+    int limit = 10,
+  }) async {
     final q = query.trim();
     if (q.isEmpty) return [];
 
@@ -78,9 +76,8 @@ class DiscographyService {
     final data = jsonDecode(r.body) as Map<String, dynamic>;
     final list = (data['artists'] as List?) ?? [];
 
-    // Tomar 10 máx para que sea rápido
     final hits = <ArtistHit>[];
-    for (final item in list.take(10)) {
+    for (final item in list.take(limit)) {
       final m = item as Map<String, dynamic>;
       hits.add(
         ArtistHit(
@@ -93,21 +90,13 @@ class DiscographyService {
     return hits;
   }
 
-  /// Info simple de artista (país + tags como "género" + bio en español)
-  /// Nota: MusicBrainz no siempre trae bio. Para "bioEs" usamos un texto corto generado
-  /// a partir de tags + país (para que siempre haya algo y sea estable).
   static Future<ArtistInfo> getArtistInfo(String artistName) async {
     final name = artistName.trim();
-    if (name.isEmpty) {
-      return ArtistInfo(name: artistName);
-    }
+    if (name.isEmpty) return ArtistInfo(name: artistName);
 
-    // Buscar el artista más probable por nombre
     final uri = Uri.parse('$_mbBase/artist/?query=${Uri.encodeComponent(name)}&fmt=json');
     final r = await http.get(uri, headers: _headers);
-    if (r.statusCode != 200) {
-      return ArtistInfo(name: artistName);
-    }
+    if (r.statusCode != 200) return ArtistInfo(name: artistName);
 
     final data = jsonDecode(r.body) as Map<String, dynamic>;
     final list = (data['artists'] as List?) ?? [];
@@ -117,7 +106,6 @@ class DiscographyService {
     final id = (first['id'] ?? '').toString();
     final country = (first['country'] ?? '').toString().trim().isEmpty ? null : (first['country'] ?? '').toString();
 
-    // Traer tags (género aproximado)
     String? genre;
     if (id.isNotEmpty) {
       final uri2 = Uri.parse('$_mbBase/artist/$id?inc=tags&fmt=json');
@@ -126,7 +114,6 @@ class DiscographyService {
         final d2 = jsonDecode(r2.body) as Map<String, dynamic>;
         final tags = (d2['tags'] as List?) ?? [];
         if (tags.isNotEmpty) {
-          // primer tag como género aproximado
           final t0 = tags.first as Map<String, dynamic>;
           final g = (t0['name'] ?? '').toString().trim();
           if (g.isNotEmpty) genre = g;
@@ -134,7 +121,6 @@ class DiscographyService {
       }
     }
 
-    // Bio simple en español (corto)
     final bioEs = _buildBioEs(
       artist: (first['name'] ?? artistName).toString(),
       country: country,
@@ -162,26 +148,20 @@ class DiscographyService {
     return '$base. Una propuesta ideal para fans del sonido clásico en vinilo.';
   }
 
-  /// Discografía por artista (release-groups tipo album), ordenada por año
   static Future<List<AlbumItem>> getDiscographyByArtistName(String artistName) async {
     final name = artistName.trim();
     if (name.isEmpty) return [];
 
-    // Buscar artista y usar su id
-    final artists = await searchArtists(name);
+    final artists = await searchArtists(name, limit: 10);
     if (artists.isEmpty) return [];
-
     return getDiscographyAlbums(artists.first.id);
   }
 
-  /// Discografía por id de artista (release-group)
   static Future<List<AlbumItem>> getDiscographyAlbums(String artistId) async {
     final id = artistId.trim();
     if (id.isEmpty) return [];
 
-    final uri = Uri.parse(
-      '$_mbBase/release-group?artist=$id&type=album&limit=100&fmt=json',
-    );
+    final uri = Uri.parse('$_mbBase/release-group?artist=$id&type=album&limit=100&fmt=json');
     final r = await http.get(uri, headers: _headers);
     if (r.statusCode != 200) return [];
 
@@ -201,7 +181,6 @@ class DiscographyService {
       }
     }
 
-    // ordenar por año asc (los sin año al final)
     albums.sort((a, b) {
       final ya = int.tryParse(a.year ?? '') ?? 9999;
       final yb = int.tryParse(b.year ?? '') ?? 9999;
@@ -213,14 +192,10 @@ class DiscographyService {
     return albums;
   }
 
-  /// ✅ Tracklist desde un release-group MBID:
-  /// 1) toma un release del release-group
-  /// 2) trae recordings/tracks
   static Future<List<TrackItem>> getTracksFromReleaseGroup(String releaseGroupMbid) async {
     final rg = releaseGroupMbid.trim();
     if (rg.isEmpty) return [];
 
-    // 1) release-group -> obtener releases
     final rgUri = Uri.parse('$_mbBase/release-group/$rg?inc=releases&fmt=json');
     final rgRes = await http.get(rgUri, headers: _headers);
     if (rgRes.statusCode != 200) return [];
@@ -229,12 +204,10 @@ class DiscographyService {
     final releases = (rgData['releases'] as List?) ?? [];
     if (releases.isEmpty) return [];
 
-    // tomar el primer release
     final rel0 = releases.first as Map<String, dynamic>;
     final releaseId = (rel0['id'] ?? '').toString();
     if (releaseId.isEmpty) return [];
 
-    // 2) release -> recordings (tracks)
     final relUri = Uri.parse('$_mbBase/release/$releaseId?inc=recordings&fmt=json');
     final relRes = await http.get(relUri, headers: _headers);
     if (relRes.statusCode != 200) return [];
