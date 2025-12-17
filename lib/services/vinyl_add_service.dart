@@ -1,35 +1,33 @@
 import 'dart:io';
-import 'package:http/http.dart' as http;
-import 'package:path/path.dart' as p;
+
 import 'package:path_provider/path_provider.dart';
 
 import '../db/vinyl_db.dart';
+import 'drive_backup_service.dart';
 import 'metadata_service.dart';
 import 'discography_service.dart';
 
-class AddVinylResult {
-  final bool ok;
-  final String message;
+class CoverCandidate {
+  final String coverUrl250;
+  final String coverUrl500;
+  final String? year;
 
-  AddVinylResult({required this.ok, required this.message});
+  CoverCandidate({
+    required this.coverUrl250,
+    required this.coverUrl500,
+    this.year,
+  });
 }
 
 class PreparedVinylAdd {
   final String artist;
   final String album;
-
   final String? year;
   final String? genre;
   final String? country;
-  final String? bioShort;
+  final String? bioEs;
 
-  /// ReleaseGroupID/MBID útil para tracklist/cover
-  final String? releaseGroupId;
-
-  /// Opciones de carátula (máx 5)
   final List<CoverCandidate> coverCandidates;
-
-  /// Por defecto: la primera opción
   CoverCandidate? selectedCover;
 
   PreparedVinylAdd({
@@ -40,118 +38,125 @@ class PreparedVinylAdd {
     this.year,
     this.genre,
     this.country,
-    this.bioShort,
-    this.releaseGroupId,
+    this.bioEs,
   });
 
   String? get selectedCover500 => selectedCover?.coverUrl500;
-  String? get selectedCover250 => selectedCover?.coverUrl250;
+}
+
+class AddResult {
+  final bool ok;
+  final String message;
+  AddResult(this.ok, this.message);
 }
 
 class VinylAddService {
-  /// 1) Prepara metadata + artist info + opciones de carátula (máx 5)
+  /// Prepara metadata (año, género, país, bio) y hasta 5 carátulas
   static Future<PreparedVinylAdd> prepare({
     required String artist,
     required String album,
-    String? artistId, // si lo tienes (por autocomplete), mejor
+    String? artistId,
   }) async {
-    final a = artist.trim();
-    final al = album.trim();
-
-    // Candidatos de carátula (máx 5)
-    final candidatesAll = await MetadataService.fetchCoverCandidates(artist: a, album: al);
-    final candidates = candidatesAll.take(5).toList();
-
-    // Metadata del álbum (año, género, releaseGroupId) usando candidates
-    final meta = await MetadataService.fetchAutoMetadataWithCandidates(
-      artist: a,
-      album: al,
-      candidates: candidates,
+    // metadata álbum
+    final meta = await MetadataService.fetchAutoMetadata(
+      artist: artist,
+      album: album,
     );
 
-    // Info artista (país + reseña en español)
-    ArtistInfo info;
-    if (artistId != null && artistId.trim().isNotEmpty) {
-      info = await DiscographyService.getArtistInfoById(artistId.trim(), artistName: a);
-    } else {
-      info = await DiscographyService.getArtistInfo(a);
-    }
+    // info artista (género, país, bio)
+    final aInfo = await DiscographyService.getArtistInfo(artist);
 
-    final country = (info.country ?? '').trim();
-    final bio = (info.bio ?? '').trim();
-    final bioShort = bio.isEmpty ? null : (bio.length > 220 ? '${bio.substring(0, 220)}…' : bio);
+    // carátulas (máx 5)
+    final covers = await MetadataService.fetchCoverCandidates(
+      artist: artist,
+      album: album,
+      max: 5,
+    );
 
     final prepared = PreparedVinylAdd(
-      artist: a,
-      album: al,
-      coverCandidates: candidates,
-      selectedCover: candidates.isNotEmpty ? candidates.first : null,
-      year: (meta.year ?? '').trim().isEmpty ? null : meta.year!.trim(),
-      genre: (meta.genre ?? '').trim().isEmpty ? null : meta.genre!.trim(),
-      country: country.isEmpty ? null : country,
-      bioShort: bioShort,
-      releaseGroupId: (meta.releaseGroupId ?? '').trim().isEmpty ? null : meta.releaseGroupId!.trim(),
+      artist: artist,
+      album: album,
+      year: meta.year,
+      genre: aInfo.genre,
+      country: aInfo.country,
+      bioEs: aInfo.bioEs,
+      coverCandidates: covers,
+      selectedCover: covers.isNotEmpty ? covers.first : null,
     );
 
     return prepared;
   }
 
-  /// 2) Agrega a SQLite y guarda carátula local
-  static Future<AddVinylResult> addPrepared(
-    PreparedVinylAdd prepared, {
-    String? overrideYear, // si quieres permitir editar año
+  /// Guarda el LP en SQLite + descarga carátula a archivo local
+  static Future<AddResult> addPrepared(
+    PreparedVinylAdd p, {
+    String? overrideYear,
   }) async {
-    final artist = prepared.artist.trim();
-    final album = prepared.album.trim();
-    if (artist.isEmpty || album.isEmpty) {
-      return AddVinylResult(ok: false, message: 'Artista y Álbum son obligatorios.');
-    }
+    // Evitar duplicado exacto (artista+album)
+    final exists = await vinylDb.instance.existsExact(
+      artista: p.artist,
+      album: p.album,
+    );
 
-    // Descargar carátula (si hay). Intentamos con la seleccionada.
+    if (exists) return AddResult(false, 'Ya lo tienes (repetido)');
+
+    // Número nuevo (LP N°)
+    final nextNumber = await vinylDb.instance.getNextNumero();
+
+    // Descargar carátula (si hay)
     String? coverPath;
-    final coverUrl = (prepared.selectedCover500 ?? '').trim();
-    if (coverUrl.isNotEmpty) {
-      coverPath = await _downloadCoverToLocal(coverUrl);
-      // si falla, NO bloqueamos: se guarda igual, pero sin cover
+    final coverUrl = p.selectedCover500;
+    if (coverUrl != null && coverUrl.trim().isNotEmpty) {
+      coverPath = await _downloadCoverToFile(
+        url: coverUrl.trim(),
+        artist: p.artist,
+        album: p.album,
+      );
     }
 
-    final y = (overrideYear ?? prepared.year ?? '').trim();
-    try {
-      await VinylDb.instance.insertVinyl(
-        artista: artist,
-        album: album,
-        year: y.isEmpty ? null : y,
-        genre: prepared.genre,
-        country: prepared.country,
-        artistBio: prepared.bioShort,
-        coverPath: coverPath,
-        mbid: prepared.releaseGroupId,
-      );
-      return AddVinylResult(ok: true, message: 'Vinilo agregado ✅');
-    } catch (_) {
-      return AddVinylResult(ok: false, message: 'Ese vinilo ya existe (Artista + Álbum).');
-    }
+    final yearToSave = (overrideYear ?? p.year)?.trim();
+    final yearInt = (yearToSave == null || yearToSave.isEmpty)
+        ? null
+        : int.tryParse(yearToSave);
+
+    await vinylDb.instance.insertVinyl({
+      'numero': nextNumber,
+      'artista': p.artist,
+      'album': p.album,
+      'year': yearInt,
+      'genre': p.genre,
+      'country': p.country,
+      'bio': p.bioEs,
+      'coverPath': coverPath,
+    });
+
+    // ✅ respaldo automático en la nube si está activado
+    await DriveBackupService.autoBackupIfEnabled();
+
+    return AddResult(true, 'Agregado ✅ (LP N° $nextNumber)');
   }
 
-  static Future<String?> _downloadCoverToLocal(String url) async {
-    try {
-      final res = await http.get(Uri.parse(url));
-      if (res.statusCode != 200) return null;
+  static Future<String?> _downloadCoverToFile({
+    required String url,
+    required String artist,
+    required String album,
+  }) async {
+    // ⚠️ Aquí asumo que tu MetadataService ya tiene un downloader simple.
+    // Si NO lo tiene, dímelo y te pongo el downloader con http.
+    final bytes = await MetadataService.downloadImageBytes(url);
+    if (bytes == null || bytes.isEmpty) return null;
 
-      final dir = await getApplicationDocumentsDirectory();
-      final coversDir = Directory(p.join(dir.path, 'covers'));
-      if (!await coversDir.exists()) await coversDir.create(recursive: true);
+    final dir = await getApplicationDocumentsDirectory();
+    final safeA = artist.replaceAll(RegExp(r'[^a-zA-Z0-9]+'), '_');
+    final safeB = album.replaceAll(RegExp(r'[^a-zA-Z0-9]+'), '_');
 
-      final ct = res.headers['content-type'] ?? '';
-      final ext = ct.contains('png') ? 'png' : 'jpg';
-      final filename = 'cover_${DateTime.now().millisecondsSinceEpoch}.$ext';
-
-      final file = File(p.join(coversDir.path, filename));
-      await file.writeAsBytes(res.bodyBytes);
-      return file.path;
-    } catch (_) {
-      return null;
+    final coversDir = Directory('${dir.path}/GaBoLP/covers');
+    if (!await coversDir.exists()) {
+      await coversDir.create(recursive: true);
     }
+
+    final file = File('${coversDir.path}/${safeA}_$safeB.jpg');
+    await file.writeAsBytes(bytes, flush: true);
+    return file.path;
   }
 }
-
