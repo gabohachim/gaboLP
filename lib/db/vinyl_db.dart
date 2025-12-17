@@ -1,9 +1,9 @@
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
-class VinylDb {
-  VinylDb._();
-  static final VinylDb instance = VinylDb._();
+class vinylDb {
+  vinylDb._();
+  static final vinylDb instance = vinylDb._();
 
   static const String table = 'vinyls';
 
@@ -38,13 +38,19 @@ class VinylDb {
     );
   }
 
-  /// Devuelve todos los vinilos (para backup)
+  // ==========================
+  // CONSULTAS
+  // ==========================
+
   Future<List<Map<String, dynamic>>> getAll() async {
     final db = await database;
     return db.query(table, orderBy: 'numero ASC');
   }
 
-  /// Inserta vinilo (si ya tienes tu propia lógica, puedes seguir usándola)
+  // ==========================
+  // INSERTAR / BORRAR
+  // ==========================
+
   Future<int> insertVinyl(Map<String, dynamic> row) async {
     final db = await database;
     return db.insert(table, row);
@@ -55,24 +61,29 @@ class VinylDb {
     return db.delete(table, where: 'id = ?', whereArgs: [id]);
   }
 
-  /// ✅ ESTE ES EL MÉTODO CLAVE PARA “Restaurar lista”
-  /// Reemplaza toda la colección por el backup
+  // ==========================
+  // 🔥 RESTAURAR DESDE BACKUP
+  // ==========================
+
   Future<void> replaceAllFromBackup(List<Map<String, dynamic>> vinyls) async {
     final db = await database;
 
     await db.transaction((txn) async {
+      // borrar todo
       await txn.delete(table);
 
+      // ordenar por número LP
       vinyls.sort((a, b) {
         final na = (a['numero'] ?? 0) as int;
         final nb = (b['numero'] ?? 0) as int;
         return na.compareTo(nb);
       });
 
+      // reinsertar
       for (final v in vinyls) {
         final row = Map<String, dynamic>.from(v);
 
-        // Si viene un id viejo, lo quitamos (porque autoincrement)
+        // eliminar id antiguo
         row.remove('id');
 
         await txn.insert(table, row);
