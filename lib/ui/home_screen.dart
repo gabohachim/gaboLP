@@ -6,8 +6,10 @@ import '../db/vinyl_db.dart';
 import '../services/discography_service.dart';
 import '../services/metadata_service.dart';
 import '../services/vinyl_add_service.dart';
+import '../services/drive_backup_service.dart';
 import 'discography_screen.dart';
 import 'vinyl_detail_sheet.dart';
+import 'settings_screen.dart';
 
 enum Vista { inicio, buscar, lista, borrar }
 
@@ -260,6 +262,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (!res.ok) return;
 
+    // ✅ Respaldo automático en la nube (si está activado)
+    await DriveBackupService.autoBackupIfEnabled();
+
     // ✅ Importantísimo: refrescar UI/contador/lista
     setState(() {
       prepared = null;
@@ -405,7 +410,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         const SizedBox(height: 10),
-
         TextField(
           controller: albumCtrl,
           onChanged: _onAlbumChanged,
@@ -441,11 +445,9 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
           ),
-
         const SizedBox(height: 10),
         ElevatedButton(onPressed: buscar, child: const Text('Buscar')),
         const SizedBox(height: 12),
-
         if (resultados.isNotEmpty)
           Container(
             padding: const EdgeInsets.all(12),
@@ -480,7 +482,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
-
         if (mostrarAgregar) ...[
           const SizedBox(height: 12),
           Container(
@@ -507,7 +508,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(height: 10),
-
           if (!autocompletando && p != null && (p.selectedCover500 ?? '').trim().isNotEmpty)
             Container(
               padding: const EdgeInsets.all(10),
@@ -543,7 +543,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-
           if (!autocompletando && p != null && p.coverCandidates.length > 1) ...[
             const SizedBox(height: 8),
             OutlinedButton.icon(
@@ -552,7 +551,6 @@ class _HomeScreenState extends State<HomeScreen> {
               label: const Text('Elegir carátula (máx 5)'),
             ),
           ],
-
           const SizedBox(height: 10),
           TextField(
             controller: yearCtrl,
@@ -594,7 +592,9 @@ class _HomeScreenState extends State<HomeScreen> {
               child: ListTile(
                 leading: _leadingCover(v),
                 title: Text('LP N° ${v['numero']} — ${v['artista']} — ${v['album']}'),
-                subtitle: Text('Año: $year  •  Género: ${genre?.isEmpty ?? true ? '—' : genre}  •  País: ${country?.isEmpty ?? true ? '—' : country}'),
+                subtitle: Text(
+                  'Año: $year  •  Género: ${genre?.isEmpty ?? true ? '—' : genre}  •  País: ${country?.isEmpty ?? true ? '—' : country}',
+                ),
                 onTap: () {
                   showModalBottomSheet(
                     context: context,
@@ -614,6 +614,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         icon: const Icon(Icons.delete),
                         onPressed: () async {
                           await VinylDb.instance.deleteById(v['id'] as int);
+                          await DriveBackupService.autoBackupIfEnabled();
                           snack('Borrado');
                           setState(() {});
                         },
@@ -651,6 +652,18 @@ class _HomeScreenState extends State<HomeScreen> {
         icon: const Icon(Icons.arrow_back),
         onPressed: () => setState(() => vista = Vista.inicio),
       ),
+      actions: [
+        IconButton(
+          tooltip: 'Ajustes',
+          icon: const Icon(Icons.settings),
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            );
+          },
+        ),
+      ],
     );
   }
 
@@ -682,7 +695,23 @@ class _HomeScreenState extends State<HomeScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     if (vista == Vista.inicio) ...[
-                      contadorLp(),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          contadorLp(),
+                          const Spacer(),
+                          IconButton(
+                            tooltip: 'Ajustes',
+                            icon: const Icon(Icons.settings, color: Colors.white),
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
                       const SizedBox(height: 14),
                       botonesInicio(),
                     ],
