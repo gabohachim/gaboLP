@@ -11,7 +11,6 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool auto = false;
   DateTime? last;
-
   bool working = false;
 
   @override
@@ -59,10 +58,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Restaurar respaldo'),
-        content: const Text(
-          'Esto reemplazará tu colección actual por la del respaldo. ¿Continuar?',
-        ),
+        title: const Text('Restaurar lista'),
+        content: const Text('Esto reemplazará tu colección actual. ¿Continuar?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
           ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Sí, restaurar')),
@@ -110,10 +107,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text('🛡️ Respaldo', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
                   Row(
                     children: [
-                      const Expanded(child: Text('Respaldo automático')),
+                      const Expanded(child: Text('Automático')),
                       Switch(value: auto, onChanged: working ? null : _toggleAuto),
                     ],
                   ),
@@ -122,13 +119,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
               ),
             ),
-
             const SizedBox(height: 14),
-
             ElevatedButton.icon(
               onPressed: working ? null : _guardar,
               icon: const Icon(Icons.save_alt),
-              label: const Text('Guardar lista (respaldar ahora)'),
+              label: const Text('Guardar lista'),
             ),
             const SizedBox(height: 10),
             OutlinedButton.icon(
@@ -136,10 +131,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               icon: const Icon(Icons.restore),
               label: const Text('Restaurar lista'),
             ),
-
             const SizedBox(height: 10),
             if (working) const LinearProgressIndicator(),
-
             const Spacer(),
             const Align(
               alignment: Alignment.bottomRight,
@@ -151,4 +144,3 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 }
-
