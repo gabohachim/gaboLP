@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../services/backup_service.dart';
+import '../services/drive_backup_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -20,8 +20,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _load() async {
-    final a = await BackupService.isAutoEnabled();
-    final l = await BackupService.getLastBackupTime();
+    final a = await DriveBackupService.isAutoEnabled();
+    final l = await DriveBackupService.getLastBackupTime();
     if (!mounted) return;
     setState(() {
       auto = a;
@@ -41,12 +41,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
   }
 
-  Future<void> _guardar() async {
+  Future<void> _toggleAuto(bool v) async {
+    setState(() => auto = v);
+    await DriveBackupService.setAutoEnabled(v);
+    _snack(v ? 'Automático activado ✅' : 'Automático desactivado');
+  }
+
+  Future<void> _guardarAhora() async {
     setState(() => working = true);
     try {
-      final path = await BackupService.exportBackupNow();
+      await DriveBackupService.backupNowToCloud();
       await _load();
-      _snack('Respaldo guardado ✅\n$path');
+      _snack('Respaldo en la nube guardado ✅');
     } catch (e) {
       _snack('Error al respaldar: $e');
     } finally {
@@ -58,7 +64,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Restaurar lista'),
+        title: const Text('Restaurar desde la nube'),
         content: const Text('Esto reemplazará tu colección actual. ¿Continuar?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
@@ -71,7 +77,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     setState(() => working = true);
     try {
-      await BackupService.restoreFromPickedFile();
+      await DriveBackupService.restoreFromCloud();
       await _load();
       _snack('Colección restaurada ✅');
     } catch (e) {
@@ -79,12 +85,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       if (mounted) setState(() => working = false);
     }
-  }
-
-  Future<void> _toggleAuto(bool v) async {
-    setState(() => auto = v);
-    await BackupService.setAutoEnabled(v);
-    _snack(v ? 'Respaldo automático activado ✅' : 'Respaldo automático desactivado');
   }
 
   @override
@@ -106,7 +106,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('🛡️ Respaldo', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                  const Text('🛡️ Respaldo en la nube', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
                   const SizedBox(height: 10),
                   Row(
                     children: [
@@ -121,14 +121,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 14),
             ElevatedButton.icon(
-              onPressed: working ? null : _guardar,
-              icon: const Icon(Icons.save_alt),
+              onPressed: working ? null : _guardarAhora,
+              icon: const Icon(Icons.cloud_upload),
               label: const Text('Guardar lista'),
             ),
             const SizedBox(height: 10),
             OutlinedButton.icon(
               onPressed: working ? null : _restaurar,
-              icon: const Icon(Icons.restore),
+              icon: const Icon(Icons.cloud_download),
               label: const Text('Restaurar lista'),
             ),
             const SizedBox(height: 10),
