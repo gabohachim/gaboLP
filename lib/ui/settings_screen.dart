@@ -47,41 +47,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _snack(v ? 'Automático activado ✅' : 'Automático desactivado');
   }
 
-  Future<void> _guardarAhora() async {
+  Future<void> _guardar() async {
     setState(() => working = true);
     try {
       await DriveBackupService.backupNowToCloud();
       await _load();
-      _snack('Respaldo en la nube guardado ✅');
+      _snack('Respaldo guardado en la nube ✅');
     } catch (e) {
-      _snack('Error al respaldar: $e');
+      _snack('Error: $e');
     } finally {
       if (mounted) setState(() => working = false);
     }
   }
 
   Future<void> _restaurar() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Restaurar desde la nube'),
-        content: const Text('Esto reemplazará tu colección actual. ¿Continuar?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Sí, restaurar')),
-        ],
-      ),
-    );
-
-    if (ok != true) return;
-
     setState(() => working = true);
     try {
       await DriveBackupService.restoreFromCloud();
       await _load();
-      _snack('Colección restaurada ✅');
+      _snack('Restaurado ✅');
     } catch (e) {
-      _snack('Error al restaurar: $e');
+      _snack('Error: $e');
     } finally {
       if (mounted) setState(() => working = false);
     }
@@ -96,32 +82,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.06),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.black12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('🛡️ Respaldo en la nube', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      const Expanded(child: Text('Automático')),
-                      Switch(value: auto, onChanged: working ? null : _toggleAuto),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Text('Último respaldo: ${_fmt(last)}', style: const TextStyle(fontWeight: FontWeight.w700)),
-                ],
-              ),
+            Row(
+              children: [
+                const Expanded(child: Text('Respaldo automático')),
+                Switch(value: auto, onChanged: working ? null : _toggleAuto),
+              ],
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 6),
+            Text('Último respaldo: ${_fmt(last)}'),
+            const SizedBox(height: 16),
             ElevatedButton.icon(
-              onPressed: working ? null : _guardarAhora,
+              onPressed: working ? null : _guardar,
               icon: const Icon(Icons.cloud_upload),
               label: const Text('Guardar lista'),
             ),
@@ -133,11 +104,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 10),
             if (working) const LinearProgressIndicator(),
-            const Spacer(),
-            const Align(
-              alignment: Alignment.bottomRight,
-              child: Text('GaBoLP', style: TextStyle(fontWeight: FontWeight.w800, color: Colors.black45)),
-            ),
           ],
         ),
       ),
